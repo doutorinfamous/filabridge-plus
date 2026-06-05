@@ -8,30 +8,26 @@
         <form id="addPrinterForm" onsubmit="addPrinter(event)">
             <div class="form-group">
                 <label for="printerName">Printer Name *</label>
-                <input type="text" id="printerName" name="name" required placeholder="e.g., Prusa MK3S+">
+                <input type="text" id="printerName" name="name" required placeholder="e.g., Snapmaker U1">
                 <small>Give your printer a descriptive name</small>
             </div>
             <div class="form-group">
                 <label for="printerIP">Hostname or IP Address *</label>
                 <input type="text" id="printerIP" name="ip_address" required placeholder="192.168.1.100 or printer.local">
-                <small>Hostname or IP address of your printer</small>
+                <small>Hostname or IP address of your Snapmaker U1 Moonraker instance</small>
             </div>
             <div class="form-group">
-                <label for="printerAPIKey">API Key *</label>
-                <input type="password" id="printerAPIKey" name="api_key" required placeholder="Your PrusaLink API key">
-                <small>Found in PrusaLink settings on your printer</small>
+                <label for="printerAPIKey">API Key (optional)</label>
+                <input type="password" id="printerAPIKey" name="api_key" placeholder="Moonraker API key, if configured">
+                <small>Only required if your U1 Moonraker instance uses API key authentication</small>
             </div>
             <div class="form-group">
                 <label for="printerModel">Printer Model</label>
                 <select id="printerModel" name="model">
-                    <option value="MK3S+">MK3S+</option>
-                    <option value="MK3S">MK3S</option>
-                    <option value="MINI+">MINI+</option>
-                    <option value="MINI">MINI</option>
-                    <option value="XL">XL</option>
-                    <option value="Other">Other</option>
+                    <option value="Snapmaker U1">Snapmaker U1</option>
+                    <option value="Unknown">Unknown</option>
                 </select>
-                <small>Select your printer model (auto-detected if possible)</small>
+                <small>Auto-detected from Moonraker when possible</small>
             </div>
             <div class="form-group">
                 <label for="printerToolheads">Number of Toolheads</label>
@@ -70,18 +66,14 @@
                 <input type="text" id="editPrinterIP" name="ip_address" required>
             </div>
             <div class="form-group">
-                <label for="editPrinterAPIKey">API Key *</label>
-                <input type="password" id="editPrinterAPIKey" name="api_key" required>
+                <label for="editPrinterAPIKey">API Key (optional)</label>
+                <input type="password" id="editPrinterAPIKey" name="api_key">
             </div>
             <div class="form-group">
                 <label for="editPrinterModel">Printer Model</label>
                 <select id="editPrinterModel" name="model">
-                    <option value="MK3S+">MK3S+</option>
-                    <option value="MK3S">MK3S</option>
-                    <option value="MINI+">MINI+</option>
-                    <option value="MINI">MINI</option>
-                    <option value="XL">XL</option>
-                    <option value="Other">Other</option>
+                    <option value="Snapmaker U1">Snapmaker U1</option>
+                    <option value="Unknown">Unknown</option>
                 </select>
             </div>
             <div class="form-group">

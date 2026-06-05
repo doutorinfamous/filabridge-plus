@@ -38,8 +38,8 @@ type Config struct {
 	LocationSyncInterval         time.Duration
 	DBFile                       string
 	WebPort                      string
-	PrusaLinkTimeout             int
-	PrusaLinkFileDownloadTimeout int
+	PrinterTimeout               int
+	PrinterFileDownloadTimeout   int
 	SpoolmanTimeout              int
 	Printers                     map[string]PrinterConfig // Key is printer ID, value is printer config
 }
@@ -68,18 +68,26 @@ func LoadConfig(bridge *FilamentBridge) (*Config, error) {
 		}
 	}
 
-	// Parse timeout values
-	prusaLinkTimeout := PrusaLinkTimeout
-	if timeoutStr, exists := configValues[ConfigKeyPrusaLinkTimeout]; exists {
+	// Parse timeout values (with legacy PrusaLink key fallback)
+	printerTimeout := PrinterTimeout
+	if timeoutStr, exists := configValues[ConfigKeyPrinterTimeout]; exists {
 		if parsed, err := strconv.Atoi(timeoutStr); err == nil {
-			prusaLinkTimeout = parsed
+			printerTimeout = parsed
+		}
+	} else if timeoutStr, exists := configValues[ConfigKeyLegacyPrinterTimeout]; exists {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil {
+			printerTimeout = parsed
 		}
 	}
 
-	prusaLinkFileDownloadTimeout := PrusaLinkFileDownloadTimeout
-	if timeoutStr, exists := configValues[ConfigKeyPrusaLinkFileDownloadTimeout]; exists {
+	printerFileDownloadTimeout := PrinterFileDownloadTimeout
+	if timeoutStr, exists := configValues[ConfigKeyPrinterFileDownloadTimeout]; exists {
 		if parsed, err := strconv.Atoi(timeoutStr); err == nil {
-			prusaLinkFileDownloadTimeout = parsed
+			printerFileDownloadTimeout = parsed
+		}
+	} else if timeoutStr, exists := configValues[ConfigKeyLegacyPrinterFileDownloadTimeout]; exists {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil {
+			printerFileDownloadTimeout = parsed
 		}
 	}
 
@@ -98,8 +106,8 @@ func LoadConfig(bridge *FilamentBridge) (*Config, error) {
 		LocationSyncInterval:         time.Duration(locationSyncInterval) * time.Minute,
 		DBFile:                       getDBFilePath(),
 		WebPort:                      configValues[ConfigKeyWebPort],
-		PrusaLinkTimeout:             prusaLinkTimeout,
-		PrusaLinkFileDownloadTimeout: prusaLinkFileDownloadTimeout,
+		PrinterTimeout:               printerTimeout,
+		PrinterFileDownloadTimeout:   printerFileDownloadTimeout,
 		SpoolmanTimeout:              spoolmanTimeout,
 		Printers:                     make(map[string]PrinterConfig),
 	}

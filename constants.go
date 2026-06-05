@@ -5,8 +5,18 @@ const (
 	StateIdle          = "IDLE"
 	StatePrinting      = "PRINTING"
 	StateFinished      = "FINISHED"
+	StateError         = "error"
 	StateOffline       = "offline"
 	StateNotConfigured = "not_configured"
+)
+
+// Moonraker raw states from Snapmaker U1
+const (
+	MoonrakerStatePrinting = "printing"
+	MoonrakerStatePaused   = "paused"
+	MoonrakerStateComplete = "complete"
+	MoonrakerStateStandby  = "standby"
+	MoonrakerStateError    = "error"
 )
 
 // Default configuration values
@@ -21,13 +31,17 @@ const (
 // Database configuration keys
 const (
 	ConfigKeyPrinterIPs                   = "printer_ips"
-	ConfigKeyAPIKey                       = "prusalink_api_key"
+	ConfigKeyAPIKey                       = "printer_api_key"
 	ConfigKeySpoolmanURL                  = "spoolman_url"
 	ConfigKeyPollInterval                 = "poll_interval"
 	ConfigKeyLocationSyncInterval         = "location_sync_interval"
 	ConfigKeyWebPort                      = "web_port"
-	ConfigKeyPrusaLinkTimeout             = "prusalink_timeout"
-	ConfigKeyPrusaLinkFileDownloadTimeout = "prusalink_file_download_timeout"
+	ConfigKeyPrinterTimeout               = "printer_timeout"
+	ConfigKeyPrinterFileDownloadTimeout   = "printer_file_download_timeout"
+	// Legacy config keys kept for migration from PrusaLink installs.
+	ConfigKeyLegacyAPIKey                       = "prusalink_api_key"
+	ConfigKeyLegacyPrinterTimeout               = "prusalink_timeout"
+	ConfigKeyLegacyPrinterFileDownloadTimeout     = "prusalink_file_download_timeout"
 	ConfigKeySpoolmanTimeout              = "spoolman_timeout"
 	ConfigKeySpoolmanUsername             = "spoolman_username"
 	ConfigKeySpoolmanPassword             = "spoolman_password"
@@ -37,26 +51,19 @@ const (
 
 // HTTP timeouts
 const (
-	PrusaLinkTimeout             = 10  // seconds
-	PrusaLinkFileDownloadTimeout = 300 // seconds for file downloads (USB storage can be slow)
+	PrinterTimeout               = 10  // seconds
+	PrinterFileDownloadTimeout   = 300 // seconds for file downloads
 	SpoolmanTimeout              = 10  // seconds
 )
 
 // Printer model detection patterns
 const (
-	ModelCorePattern = "core"
-	ModelXLPattern   = "xl"
-	ModelMK4Pattern  = "mk4"
-	ModelMK3Pattern  = "mk3"
-	ModelMiniPattern = "mini"
+	ModelU1Pattern        = "u1"
+	ModelSnapmakerPattern = "snapmaker"
 )
 
 // Printer model names
 const (
-	ModelCoreOne  = "CORE One"
-	ModelXL       = "XL"
-	ModelMK4      = "MK4"
-	ModelMK35     = "MK3.5"
-	ModelMiniPlus = "MINI+"
-	ModelUnknown  = "Unknown"
+	ModelSnapmakerU1 = "Snapmaker U1"
+	ModelUnknown     = "Unknown"
 )

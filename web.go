@@ -778,26 +778,22 @@ func (ws *WebServer) updatePrinterHandler(c *gin.Context) {
 	if printerConfig.Model == "" || printerConfig.Model == ModelUnknown {
 		log.Printf("🔍 [Auto-Detection] Detecting model for printer %s (IP: %s)", printerID, printerConfig.IPAddress)
 
-		// Create PrusaLink client for detection
-		client := NewPrusaLinkClient(printerConfig.IPAddress, printerConfig.APIKey, 10, 60) // Use default timeouts for detection
+		client := NewSnapmakerU1MoonrakerClient(printerConfig.IPAddress, printerConfig.APIKey, 10, 60)
 
-		// Try to get printer info
 		printerInfo, err := client.GetPrinterInfo()
 		if err != nil {
 			log.Printf("⚠️ [Auto-Detection] Failed to detect model for %s: %v (keeping current model: %s)",
 				printerConfig.IPAddress, err, printerConfig.Model)
 		} else {
-			// Use shared model detection function
 			detectedModel := detectPrinterModel(printerInfo.Hostname)
 
-			if detectedModel != ModelUnknown {
-				log.Printf("✅ [Auto-Detection] Detected model for %s: '%s' -> %s",
-					printerConfig.IPAddress, printerInfo.Hostname, detectedModel)
-				printerConfig.Model = detectedModel
-			} else {
-				log.Printf("❌ [Auto-Detection] No pattern matched for hostname '%s' from %s",
-					printerInfo.Hostname, printerConfig.IPAddress)
+			if detectedModel == ModelUnknown {
+				detectedModel = ModelSnapmakerU1
 			}
+
+			log.Printf("✅ [Auto-Detection] Detected model for %s: '%s' -> %s",
+				printerConfig.IPAddress, printerInfo.Hostname, detectedModel)
+			printerConfig.Model = detectedModel
 		}
 	}
 
@@ -928,40 +924,26 @@ func (ws *WebServer) updateToolheadNameHandler(c *gin.Context) {
 // detectPrinterModel detects printer model from hostname
 func detectPrinterModel(hostname string) string {
 	model := ModelUnknown
-	hostnameLower := strings.ToLower(hostname)
-	hostnameLower = strings.TrimSpace(hostnameLower) // Clean up any whitespace
+	hostnameLower := strings.ToLower(strings.TrimSpace(hostname))
 
 	log.Printf("🔍 [Detection] Checking hostname '%s' against patterns:", hostnameLower)
 
-	if strings.Contains(hostnameLower, ModelCorePattern) {
-		model = ModelCoreOne
-		log.Printf("✅ [Detection] Matched pattern '%s' -> %s", ModelCorePattern, model)
-	} else if strings.Contains(hostnameLower, ModelXLPattern) {
-		model = ModelXL
-		log.Printf("✅ [Detection] Matched pattern '%s' -> %s", ModelXLPattern, model)
-	} else if strings.Contains(hostnameLower, ModelMK4Pattern) {
-		model = ModelMK4
-		log.Printf("✅ [Detection] Matched pattern '%s' -> %s", ModelMK4Pattern, model)
-	} else if strings.Contains(hostnameLower, ModelMK3Pattern) {
-		model = ModelMK35
-		log.Printf("✅ [Detection] Matched pattern '%s' -> %s", ModelMK3Pattern, model)
-	} else if strings.Contains(hostnameLower, ModelMiniPattern) {
-		model = ModelMiniPlus
-		log.Printf("✅ [Detection] Matched pattern '%s' -> %s", ModelMiniPattern, model)
+	if strings.Contains(hostnameLower, ModelU1Pattern) || strings.Contains(hostnameLower, ModelSnapmakerPattern) {
+		model = ModelSnapmakerU1
+		log.Printf("✅ [Detection] Matched Snapmaker U1 pattern -> %s", model)
 	} else {
-		log.Printf("❌ [Detection] No pattern matched for hostname '%s'. Available patterns: %s, %s, %s, %s, %s",
-			hostnameLower, ModelCorePattern, ModelXLPattern, ModelMK4Pattern, ModelMK3Pattern, ModelMiniPattern)
+		log.Printf("❌ [Detection] No Snapmaker U1 pattern matched for hostname '%s'", hostnameLower)
 	}
 
 	log.Printf("🎯 [Detection] Final result: hostname='%s' -> model='%s'", hostname, model)
 	return model
 }
 
-// detectPrinterHandler detects printer model from PrusaLink API
+// detectPrinterHandler detects printer model from Snapmaker U1 Moonraker API
 func (ws *WebServer) detectPrinterHandler(c *gin.Context) {
 	var req struct {
 		IPAddress string `json:"ip_address" binding:"required"`
-		APIKey    string `json:"api_key" binding:"required"`
+		APIKey    string `json:"api_key"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -977,8 +959,7 @@ func (ws *WebServer) detectPrinterHandler(c *gin.Context) {
 
 	log.Printf("🔍 [Detection] Starting printer model detection for IP: %s", req.IPAddress)
 
-	// Create PrusaLink client
-	client := NewPrusaLinkClient(req.IPAddress, req.APIKey, 10, 60) // Use default timeouts for detection
+	client := NewSnapmakerU1MoonrakerClient(req.IPAddress, req.APIKey, 10, 60)
 
 	// Try to get printer info, but don't fail if it times out
 	printerInfo, err := client.GetPrinterInfo()
@@ -997,10 +978,11 @@ func (ws *WebServer) detectPrinterHandler(c *gin.Context) {
 
 	log.Printf("📥 [Detection] Received printer info: hostname='%s'", printerInfo.Hostname)
 
-	// Use shared model detection function
 	model := detectPrinterModel(printerInfo.Hostname)
+	if model == ModelUnknown {
+		model = ModelSnapmakerU1
+	}
 
-	// Return detected information (toolheads will be provided by user)
 	c.JSON(http.StatusOK, gin.H{
 		"model":    model,
 		"hostname": printerInfo.Hostname,

@@ -14,7 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// FilamentBridge manages the connection between PrusaLink and Spoolman
+// FilamentBridge manages the connection between Snapmaker U1 Moonraker and Spoolman
 type FilamentBridge struct {
 	config           *Config
 	spoolman         *SpoolmanClient
@@ -177,6 +177,10 @@ func (b *FilamentBridge) initDatabase() error {
 		return fmt.Errorf("failed to initialize default configuration: %w", err)
 	}
 
+	if err := b.migrateLegacyPrinterConfig(); err != nil {
+		log.Printf("Warning: Failed to migrate legacy printer configuration: %v", err)
+	}
+
 	// Migrate existing FilaBridge locations to Spoolman
 	if err := b.migrateLocationsToSpoolman(); err != nil {
 		log.Printf("Warning: Failed to migrate locations to Spoolman: %v", err)
@@ -187,6 +191,37 @@ func (b *FilamentBridge) initDatabase() error {
 	if err := b.migrateToolheadMappingsToSpoolman(); err != nil {
 		log.Printf("Warning: Failed to migrate toolhead mappings to Spoolman: %v", err)
 		// Don't fail initialization if migration fails
+	}
+
+	return nil
+}
+
+// migrateLegacyPrinterConfig copies legacy PrusaLink config keys to Moonraker keys.
+func (b *FilamentBridge) migrateLegacyPrinterConfig() error {
+	legacyMappings := map[string]string{
+		ConfigKeyLegacyPrinterTimeout:           ConfigKeyPrinterTimeout,
+		ConfigKeyLegacyPrinterFileDownloadTimeout: ConfigKeyPrinterFileDownloadTimeout,
+		ConfigKeyLegacyAPIKey:                   ConfigKeyAPIKey,
+	}
+
+	for legacyKey, newKey := range legacyMappings {
+		legacyValue, err := b.GetConfigValue(legacyKey)
+		if err != nil {
+			continue
+		}
+		if legacyValue == "" {
+			continue
+		}
+
+		currentValue, err := b.GetConfigValue(newKey)
+		if err == nil && currentValue != "" {
+			continue
+		}
+
+		if err := b.SetConfigValue(newKey, legacyValue); err != nil {
+			return fmt.Errorf("failed to migrate %s to %s: %w", legacyKey, newKey, err)
+		}
+		log.Printf("Migration: copied legacy config key %s to %s", legacyKey, newKey)
 	}
 
 	return nil
@@ -326,14 +361,14 @@ func (b *FilamentBridge) migrateToolheadMappingsToSpoolman() error {
 func (b *FilamentBridge) initializeDefaultConfig() error {
 	defaultConfigs := map[string]string{
 		ConfigKeyPrinterIPs:                      "", // Comma-separated list of printer IP addresses
-		ConfigKeyAPIKey:                          "", // PrusaLink API key for authentication
+		ConfigKeyAPIKey:                          "", // Optional Moonraker API key for authentication
 		ConfigKeySpoolmanURL:                     DefaultSpoolmanURL,
 		ConfigKeySpoolmanUsername:                "", // Spoolman basic auth username (optional)
 		ConfigKeySpoolmanPassword:                "", // Spoolman basic auth password (optional)
 		ConfigKeyPollInterval:                    fmt.Sprintf("%d", DefaultPollInterval),
 		ConfigKeyWebPort:                         DefaultWebPort,
-		ConfigKeyPrusaLinkTimeout:                fmt.Sprintf("%d", PrusaLinkTimeout),
-		ConfigKeyPrusaLinkFileDownloadTimeout:    fmt.Sprintf("%d", PrusaLinkFileDownloadTimeout),
+		ConfigKeyPrinterTimeout:                  fmt.Sprintf("%d", PrinterTimeout),
+		ConfigKeyPrinterFileDownloadTimeout:      fmt.Sprintf("%d", PrinterFileDownloadTimeout),
 		ConfigKeySpoolmanTimeout:                 fmt.Sprintf("%d", SpoolmanTimeout),
 		ConfigKeyAutoAssignPreviousSpoolEnabled:  "false", // Enable auto-assignment of previous spool to default location
 		ConfigKeyAutoAssignPreviousSpoolLocation: "",      // Default location name for auto-assigned previous spools
@@ -365,15 +400,15 @@ func (b *FilamentBridge) initializeDefaultConfig() error {
 // getConfigDescription returns a description for a configuration key
 func getConfigDescription(key string) string {
 	descriptions := map[string]string{
-		ConfigKeyPrinterIPs:                      "Comma-separated list of printer IP addresses for PrusaLink",
-		ConfigKeyAPIKey:                          "PrusaLink API key for authentication",
+		ConfigKeyPrinterIPs:                      "Comma-separated list of printer IP addresses for Moonraker",
+		ConfigKeyAPIKey:                          "Optional Moonraker API key for authentication",
 		ConfigKeySpoolmanURL:                     "URL of Spoolman instance",
 		ConfigKeySpoolmanUsername:                "Spoolman basic auth username (optional, leave empty if not using basic auth)",
 		ConfigKeySpoolmanPassword:                "Spoolman basic auth password (optional, leave empty if not using basic auth)",
 		ConfigKeyPollInterval:                    "Polling interval in seconds",
 		ConfigKeyWebPort:                         "Port for web interface",
-		ConfigKeyPrusaLinkTimeout:                "PrusaLink API timeout in seconds",
-		ConfigKeyPrusaLinkFileDownloadTimeout:    "PrusaLink file download timeout in seconds",
+		ConfigKeyPrinterTimeout:                  "Printer Moonraker API timeout in seconds",
+		ConfigKeyPrinterFileDownloadTimeout:      "Printer file download timeout in seconds",
 		ConfigKeySpoolmanTimeout:                 "Spoolman API timeout in seconds",
 		ConfigKeyAutoAssignPreviousSpoolEnabled:  "Enable automatic assignment of previous spool to default location when assigning new spool to toolhead",
 		ConfigKeyAutoAssignPreviousSpoolLocation: "Default location name where previous spools will be automatically assigned (must exist as a location)",
@@ -664,8 +699,8 @@ func (b *FilamentBridge) GetConfigSnapshot() *Config {
 		PollInterval:                 b.config.PollInterval,
 		DBFile:                       b.config.DBFile,
 		WebPort:                      b.config.WebPort,
-		PrusaLinkTimeout:             b.config.PrusaLinkTimeout,
-		PrusaLinkFileDownloadTimeout: b.config.PrusaLinkFileDownloadTimeout,
+		PrinterTimeout:               b.config.PrinterTimeout,
+		PrinterFileDownloadTimeout:   b.config.PrinterFileDownloadTimeout,
 		SpoolmanTimeout:              b.config.SpoolmanTimeout,
 		Printers:                     make(map[string]PrinterConfig),
 	}
@@ -947,51 +982,34 @@ func (b *FilamentBridge) MonitorPrinters() {
 		return
 	}
 
-	// Monitor each printer using PrusaLink
+	// Monitor each printer using Snapmaker U1 Moonraker
 	for printerID, printerConfig := range configSnapshot.Printers {
 		if printerID == "no_printers" {
 			continue // Skip placeholder
 		}
 		go func(printerID string, config PrinterConfig) {
-			if err := b.monitorPrusaLink(printerID, config); err != nil {
+			if err := b.monitorPrinter(printerID, config); err != nil {
 				log.Printf("Error monitoring printer %s (%s): %v", config.IPAddress, printerID, err)
 			}
 		}(printerID, printerConfig)
 	}
 }
 
-// monitorPrusaLink monitors a single printer using PrusaLink API
-func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig) error {
+// monitorPrinter monitors a single printer using Snapmaker U1 Moonraker API
+func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) error {
 	log.Printf("Starting monitoring for printer %s (%s) at %s", printerID, config.IPAddress, config.Name)
-	client := NewPrusaLinkClient(config.IPAddress, config.APIKey, b.config.PrusaLinkTimeout, b.config.PrusaLinkFileDownloadTimeout)
+	client := NewSnapmakerU1MoonrakerClient(config.IPAddress, config.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
 
-	status, err := client.GetStatus()
+	printerStatus, err := client.GetPrinterStatus()
 	if err != nil {
 		log.Printf("Warning: Failed to get printer status from %s (%s): %v", config.IPAddress, printerID, err)
 		return nil // Don't fail the entire monitoring cycle for one printer
 	}
 
-	jobInfo, err := client.GetJobInfo()
-	if err != nil {
-		log.Printf("Warning: Failed to get job info from %s (%s): %v", config.IPAddress, printerID, err)
-		// Continue with status-only monitoring if job info fails
-		jobInfo = &PrusaLinkJob{}
-	}
-
-	currentState := status.Printer.State
-	jobName := "No active job"
-	currentJobFilename := ""
-	if jobInfo.File.Name != "" {
-		jobName = jobInfo.File.DisplayName // Use display name for better readability
-		// Use the download path directly from refs - it's already in the correct format
-		if jobInfo.File.Refs.Download != "" {
-			currentJobFilename = strings.TrimPrefix(jobInfo.File.Refs.Download, "/")
-		} else {
-			// Fallback: construct the path manually
-			storage := strings.TrimPrefix(jobInfo.File.Path, "/")
-			currentJobFilename = storage + "/" + jobInfo.File.Name
-		}
-	}
+	currentState := printerStatus.State
+	rawState := printerStatus.RawState
+	jobName := printerStatus.JobDisplayName
+	currentJobFilename := printerStatus.JobFilename
 
 	// Check if print just finished - minimize lock scope
 	b.mutex.RLock()
@@ -1000,11 +1018,11 @@ func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig
 	b.mutex.RUnlock()
 
 	// Debug logging for all printers
-	log.Printf("Printer %s (%s): state=%s, wasPrinting=%v, job=%s, stored_file=%s",
-		config.IPAddress, printerID, currentState, wasPrinting, jobName, storedJobFile)
+	log.Printf("Printer %s (%s): state=%s, raw_state=%s, wasPrinting=%v, job=%s, stored_file=%s",
+		config.IPAddress, printerID, currentState, rawState, wasPrinting, jobName, storedJobFile)
 
 	// Check if print just finished
-	if (currentState == StateIdle || currentState == StateFinished) && wasPrinting {
+	if wasPrinting && isMoonrakerFinishedState(rawState) && rawState != MoonrakerStateError {
 		// Use stored filename (should be available since we stored it when printing started)
 		filenameToUse := storedJobFile
 		if filenameToUse == "" {
@@ -1023,7 +1041,7 @@ func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig
 		b.mutex.Unlock()
 
 		// Now process the print (this takes a long time)
-		err := b.handlePrusaLinkPrintFinished(config, filenameToUse)
+		err := b.handlePrintFinished(config, filenameToUse)
 
 		// Clear processing flag and filename after completion
 		b.mutex.Lock()
@@ -1034,7 +1052,7 @@ func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig
 		b.mutex.Unlock()
 
 		if err != nil {
-			log.Printf("Error handling PrusaLink print finished: %v", err)
+			log.Printf("Error handling print finished: %v", err)
 		}
 	} else {
 		// Update state tracking - minimize lock scope
@@ -1042,16 +1060,16 @@ func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig
 		defer b.mutex.Unlock()
 
 		// Store the current job filename when printing starts (only if not already stored)
-		if currentState == StatePrinting && currentJobFilename != "" && storedJobFile == "" {
+		if isMoonrakerPrintingState(rawState) && currentJobFilename != "" && storedJobFile == "" {
 			b.currentJobFile[printerID] = currentJobFilename
 			log.Printf("📁 Stored job filename for %s (%s): %s", config.IPAddress, printerID, currentJobFilename)
 		}
 
 		// Update wasPrinting flag for NEXT cycle
-		b.wasPrinting[printerID] = currentState == StatePrinting
+		b.wasPrinting[printerID] = isMoonrakerPrintingState(rawState)
 
 		// Clear stored filename when print finishes (but only if not currently processing)
-		if (currentState == StateIdle || currentState == StateFinished) && !b.processingPrints[printerID] {
+		if isMoonrakerFinishedState(rawState) && !b.processingPrints[printerID] {
 			b.currentJobFile[printerID] = ""
 		}
 	}
@@ -1059,14 +1077,13 @@ func (b *FilamentBridge) monitorPrusaLink(printerID string, config PrinterConfig
 	return nil
 }
 
-// handlePrusaLinkPrintFinished handles when a print job finishes via PrusaLink
-func (b *FilamentBridge) handlePrusaLinkPrintFinished(config PrinterConfig, filename string) error {
-	log.Printf("Print finished via PrusaLink (%s): %s", config.IPAddress, filename)
+// handlePrintFinished handles when a print job finishes via Moonraker
+func (b *FilamentBridge) handlePrintFinished(config PrinterConfig, filename string) error {
+	log.Printf("Print finished via Moonraker (%s): %s", config.IPAddress, filename)
 
 	printerName := resolvePrinterName(config)
 
-	// Create PrusaLink client for this printer
-	prusaClient := NewPrusaLinkClient(config.IPAddress, config.APIKey, b.config.PrusaLinkTimeout, b.config.PrusaLinkFileDownloadTimeout)
+	client := NewSnapmakerU1MoonrakerClient(config.IPAddress, config.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
 
 	// Use the filename parameter (stored when print started)
 	if filename == "" {
@@ -1079,15 +1096,7 @@ func (b *FilamentBridge) handlePrusaLinkPrintFinished(config PrinterConfig, file
 	log.Printf("Analyzing G-code file for filament usage: %s", filename)
 
 	// Download with retry logic
-	gcodeContent, err := prusaClient.GetGcodeFileWithRetry(filename, b.config.PrusaLinkFileDownloadTimeout)
-	if err != nil {
-		errorMsg := fmt.Sprintf("failed to download G-code file after retries: %v", err)
-		b.addPrintError(printerName, filename, errorMsg)
-		return fmt.Errorf("%s", errorMsg)
-	}
-
-	// Parse the downloaded file
-	filamentUsage, err := prusaClient.ParseGcodeFilamentUsage(gcodeContent)
+	filamentUsage, err := client.ParseFilamentUsageFromFile(filename, b.config.PrinterFileDownloadTimeout)
 	if err != nil {
 		errorMsg := fmt.Sprintf("failed to parse G-code for filament usage: %v", err)
 		b.addPrintError(printerName, filename, errorMsg)
@@ -1191,23 +1200,19 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 		return status, nil
 	}
 
-	// Get printer statuses from PrusaLink
+	// Get printer statuses from Moonraker
 	if len(configSnapshot.Printers) > 0 {
 		for printerID, printerConfig := range configSnapshot.Printers {
 			if printerID == "no_printers" {
 				continue // Skip placeholder
 			}
 
-			client := NewPrusaLinkClient(printerConfig.IPAddress, printerConfig.APIKey, b.config.PrusaLinkTimeout, b.config.PrusaLinkFileDownloadTimeout)
+			client := NewSnapmakerU1MoonrakerClient(printerConfig.IPAddress, printerConfig.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
 
-			// Use the configured printer name, not the hostname from PrusaLink
 			printerName := printerConfig.Name
 
-			// Get current status
-			printerStatus, err := client.GetStatus()
+			printerStatus, err := client.GetPrinterStatus()
 			if err != nil {
-				// Enhanced error logging to help diagnose connection issues
-				// This is especially useful for DNS resolution problems with hostnames
 				log.Printf("Warning: Failed to get printer status from %s (%s - %s): %v",
 					printerConfig.IPAddress, printerID, printerName, err)
 				status.Printers[printerID] = PrinterData{
@@ -1219,7 +1224,7 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 
 			status.Printers[printerID] = PrinterData{
 				Name:  printerName,
-				State: printerStatus.Printer.State,
+				State: printerStatus.State,
 			}
 		}
 	} else {

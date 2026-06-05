@@ -165,8 +165,8 @@ function loadAdvancedSettings() {
     fetch('/api/config')
         .then(response => response.json())
         .then(config => {
-            document.getElementById('prusalinkTimeout').value = config.prusalink_timeout || '10';
-            document.getElementById('prusalinkFileDownloadTimeout').value = config.prusalink_file_download_timeout || '60';
+            document.getElementById('printerTimeout').value = config.printer_timeout || config.prusalink_timeout || '10';
+            document.getElementById('printerFileDownloadTimeout').value = config.printer_file_download_timeout || config.prusalink_file_download_timeout || '60';
             document.getElementById('spoolmanTimeout').value = config.spoolman_timeout || '30';
         })
         .catch(error => {
@@ -176,17 +176,17 @@ function loadAdvancedSettings() {
 
 function saveAdvancedSettings() {
     const config = {
-        prusalink_timeout: document.getElementById('prusalinkTimeout').value,
-        prusalink_file_download_timeout: document.getElementById('prusalinkFileDownloadTimeout').value,
+        printer_timeout: document.getElementById('printerTimeout').value,
+        printer_file_download_timeout: document.getElementById('printerFileDownloadTimeout').value,
         spoolman_timeout: document.getElementById('spoolmanTimeout').value
     };
     
     // Validate inputs
-    if (config.prusalink_timeout < 5 || config.prusalink_timeout > 300) {
-        alert('PrusaLink API timeout must be between 5 and 300 seconds');
+    if (config.printer_timeout < 5 || config.printer_timeout > 300) {
+        alert('Moonraker API timeout must be between 5 and 300 seconds');
         return;
     }
-    if (config.prusalink_file_download_timeout < 10 || config.prusalink_file_download_timeout > 600) {
+    if (config.printer_file_download_timeout < 10 || config.printer_file_download_timeout > 600) {
         alert('File download timeout must be between 10 and 600 seconds');
         return;
     }
@@ -216,8 +216,8 @@ function saveAdvancedSettings() {
 
 function resetAdvancedSettings() {
     if (confirm('Reset all timeout settings to their default values?')) {
-        document.getElementById('prusalinkTimeout').value = '10';
-        document.getElementById('prusalinkFileDownloadTimeout').value = '60';
+        document.getElementById('printerTimeout').value = '10';
+        document.getElementById('printerFileDownloadTimeout').value = '60';
         document.getElementById('spoolmanTimeout').value = '30';
     }
 }

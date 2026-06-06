@@ -167,7 +167,7 @@ func (c *SnapmakerU1MoonrakerClient) GetServerInfo() (*moonrakerServerInfoResult
 		return nil, fmt.Errorf("Moonraker API error: %s", envelope.Error.Message)
 	}
 
-	var info MoonrakerServerInfoResult
+	var info moonrakerServerInfoResult
 	if err := json.Unmarshal(envelope.Result, &info); err != nil {
 		return nil, fmt.Errorf("failed to decode server info: %w", err)
 	}

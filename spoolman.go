@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -368,8 +369,54 @@ type SpoolmanLocation struct {
 	Archived bool   `json:"archived"`
 }
 
-// GetLocations gets all locations from Spoolman
-func (c *SpoolmanClient) GetLocations() ([]SpoolmanLocation, error) {
+// spoolmanSettingResponse represents a Spoolman setting API response
+type spoolmanSettingResponse struct {
+	Value string `json:"value"`
+	IsSet bool   `json:"is_set"`
+	Type  string `json:"type"`
+}
+
+// getConfiguredLocationNames returns location names stored in Spoolman's "locations" setting.
+// These include empty locations created on the Locations page.
+func (c *SpoolmanClient) getConfiguredLocationNames() ([]string, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/setting/locations", nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	c.addAuthHeader(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error getting locations setting from Spoolman: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleAPIError(resp)
+	}
+
+	var setting spoolmanSettingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&setting); err != nil {
+		return nil, fmt.Errorf("error decoding locations setting from Spoolman: %w", err)
+	}
+
+	var names []string
+	if err := json.Unmarshal([]byte(setting.Value), &names); err != nil {
+		return nil, fmt.Errorf("error parsing locations setting value from Spoolman: %w", err)
+	}
+
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered, nil
+}
+
+// getSpoolDerivedLocations returns locations that appear on at least one spool.
+func (c *SpoolmanClient) getSpoolDerivedLocations() ([]SpoolmanLocation, error) {
 	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/location", nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
@@ -386,19 +433,16 @@ func (c *SpoolmanClient) GetLocations() ([]SpoolmanLocation, error) {
 		return nil, c.handleAPIError(resp)
 	}
 
-	// Read full body so we can retry alternative shapes and log on error
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading locations response from Spoolman: %w", err)
 	}
 
-	// 1) Try standard array of objects
 	var locations []SpoolmanLocation
-	if err := json.Unmarshal(bodyBytes, &locations); err == nil {
+	if err := json.Unmarshal(bodyBytes, &locations); err == nil && len(locations) > 0 && locations[0].Name != "" {
 		return locations, nil
 	}
 
-	// 2) Try { data: [...] } wrapper
 	var dataWrapper struct {
 		Data    []SpoolmanLocation `json:"data"`
 		Results []SpoolmanLocation `json:"results"`
@@ -412,22 +456,68 @@ func (c *SpoolmanClient) GetLocations() ([]SpoolmanLocation, error) {
 		}
 	}
 
-	// 3) Try simple array of names like ["Testing", ...]
 	var names []string
 	if err := json.Unmarshal(bodyBytes, &names); err == nil {
 		for _, n := range names {
-			locations = append(locations, SpoolmanLocation{Name: n})
+			n = strings.TrimSpace(n)
+			if n != "" {
+				locations = append(locations, SpoolmanLocation{Name: n})
+			}
 		}
 		return locations, nil
 	}
 
-	// Log snippet for diagnostics and return error
 	snippet := string(bodyBytes)
 	if len(snippet) > 300 {
 		snippet = snippet[:300] + "..."
 	}
 	log.Printf("Spoolman /location unexpected JSON. Snippet: %s", snippet)
 	return nil, fmt.Errorf("error decoding locations from Spoolman: unexpected JSON shape")
+}
+
+func mergeSpoolmanLocations(configured []string, spoolDerived []SpoolmanLocation) []SpoolmanLocation {
+	seen := make(map[string]bool)
+	merged := make([]SpoolmanLocation, 0, len(configured)+len(spoolDerived))
+
+	for _, name := range configured {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		merged = append(merged, SpoolmanLocation{Name: name})
+	}
+
+	for _, location := range spoolDerived {
+		if location.Archived {
+			continue
+		}
+		name := strings.TrimSpace(location.Name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		merged = append(merged, location)
+	}
+
+	return merged
+}
+
+// GetLocations gets all locations from Spoolman, including empty locations
+// configured on the Locations page and locations currently assigned to spools.
+func (c *SpoolmanClient) GetLocations() ([]SpoolmanLocation, error) {
+	configured, err := c.getConfiguredLocationNames()
+	if err != nil {
+		log.Printf("Warning: Failed to get configured locations from Spoolman settings: %v", err)
+		configured = []string{}
+	}
+
+	spoolDerived, err := c.getSpoolDerivedLocations()
+	if err != nil {
+		return nil, err
+	}
+
+	return mergeSpoolmanLocations(configured, spoolDerived), nil
 }
 
 // GetOrCreateLocation gets an existing location by name

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,6 +28,8 @@ type MoonrakerPrinterStatus struct {
 	JobFilename    string
 	JobDisplayName string
 	Progress       float64
+	PrintDuration  float64
+	FilamentUsed   float64 // extruded filament length in mm from print_stats
 }
 
 // MoonrakerPrinterInfo represents printer identification data.
@@ -69,11 +72,42 @@ type moonrakerServerInfoResult struct {
 }
 
 type moonrakerFileMetadataResult struct {
-	Filename      string  `json:"filename"`
-	Size          int64   `json:"size"`
-	FilamentTotal float64 `json:"filament_total"`
-	FilamentWeightTotal float64 `json:"filament_weight_total"`
-	FilamentWeights []float64 `json:"filament_weights"`
+	Filename            string    `json:"filename"`
+	Size                int64     `json:"size"`
+	FilamentTotal       float64   `json:"filament_total"`
+	FilamentWeightTotal float64   `json:"filament_weight_total"`
+	FilamentWeights     []float64 `json:"filament_weights"`
+	FilamentWeight      []float64 `json:"filament_weight"` // SnapmakerOrca uses singular field name
+	ReferencedTools     []int     `json:"referenced_tools"`
+}
+
+type moonrakerPrintTaskConfigResult struct {
+	ExtrudersUsed []bool `json:"extruders_used"`
+	ReprintInfo   struct {
+		ExtrudersUsed []bool `json:"extruders_used"`
+	} `json:"reprint_info"`
+}
+
+type moonrakerObjectsQueryPrintTaskResult struct {
+	Status struct {
+		PrintTaskConfig moonrakerPrintTaskConfigResult `json:"print_task_config"`
+	} `json:"status"`
+}
+
+func moonrakerMetadataToFilamentUsage(m *moonrakerFileMetadataResult) *FilamentUsageMetadata {
+	if m == nil {
+		return nil
+	}
+	weights := m.FilamentWeights
+	if len(weights) == 0 {
+		weights = m.FilamentWeight
+	}
+	return &FilamentUsageMetadata{
+		FilamentWeights:     weights,
+		FilamentWeightTotal: m.FilamentWeightTotal,
+		ReferencedTools:     m.ReferencedTools,
+		Size:                m.Size,
+	}
 }
 
 // NewSnapmakerU1MoonrakerClient creates a client for Snapmaker U1 Moonraker.
@@ -239,9 +273,21 @@ func (c *SnapmakerU1MoonrakerClient) GetPrinterStatus() (*MoonrakerPrinterStatus
 		JobFilename:    filename,
 		JobDisplayName: displayNameFromFilename(filename),
 		Progress:       result.Status.VirtualSDCard.Progress,
+		PrintDuration:  result.Status.PrintStats.PrintDuration,
+		FilamentUsed:   result.Status.PrintStats.FilamentUsed,
 	}
 
 	return status, nil
+}
+
+// filamentLengthMmToGrams converts extruded filament length (mm) to weight (grams).
+func filamentLengthMmToGrams(lengthMm, diameterMm, densityGcm3 float64) float64 {
+	if lengthMm <= 0 || diameterMm <= 0 || densityGcm3 <= 0 {
+		return 0
+	}
+	radiusMm := diameterMm / 2
+	volumeMm3 := math.Pi * radiusMm * radiusMm * lengthMm
+	return volumeMm3 * densityGcm3 / 1000
 }
 
 // GetGcodeFile downloads a G-code file from Moonraker.
@@ -361,43 +407,72 @@ func (c *SnapmakerU1MoonrakerClient) GetFileMetadata(filename string) (*moonrake
 	return &metadata, nil
 }
 
-// ParseFilamentUsageFromFile downloads and parses filament usage, with metadata fallback.
+// GetPrintTaskExtrudersUsed returns which extruders Snapmaker firmware reported as used
+// for the current/last print (print_task_config.extruders_used).
+func (c *SnapmakerU1MoonrakerClient) GetPrintTaskExtrudersUsed() []bool {
+	body, err := c.doRequest(http.MethodGet, "/printer/objects/query?print_task_config")
+	if err != nil {
+		return nil
+	}
+
+	var envelope moonrakerResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil
+	}
+	if envelope.Error != nil {
+		return nil
+	}
+
+	var result moonrakerObjectsQueryPrintTaskResult
+	if err := json.Unmarshal(envelope.Result, &result); err != nil {
+		return nil
+	}
+
+	cfg := result.Status.PrintTaskConfig
+	if countTrue(cfg.ExtrudersUsed) > 0 {
+		return cfg.ExtrudersUsed
+	}
+
+	if countTrue(cfg.ReprintInfo.ExtrudersUsed) > 0 {
+		return cfg.ReprintInfo.ExtrudersUsed
+	}
+
+	return nil
+}
+
+func countTrue(flags []bool) int {
+	n := 0
+	for _, v := range flags {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+// ParseFilamentUsageFromFile downloads the exact G-code file and resolves per-extruder usage.
 func (c *SnapmakerU1MoonrakerClient) ParseFilamentUsageFromFile(filename string, fileDownloadTimeout int) (map[int]float64, error) {
 	gcodeContent, err := c.GetGcodeFileWithRetry(filename, fileDownloadTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	filamentUsage, err := ParseGcodeFilamentUsage(gcodeContent)
-	if err != nil {
-		return nil, err
-	}
-	if len(filamentUsage) > 0 {
-		return filamentUsage, nil
-	}
-
-	metadata, err := c.GetFileMetadata(filename)
-	if err != nil {
-		return filamentUsage, nil
-	}
-
-	if len(metadata.FilamentWeights) > 0 {
-		usage := make(map[int]float64)
-		for i, weight := range metadata.FilamentWeights {
-			if weight > 0 {
-				usage[i] = weight
-			}
-		}
-		if len(usage) > 0 {
-			return usage, nil
+	var metadata *FilamentUsageMetadata
+	if meta, metaErr := c.GetFileMetadata(filename); metaErr == nil {
+		metadata = moonrakerMetadataToFilamentUsage(meta)
+		if metadata != nil && metadata.Size > 0 && int64(len(gcodeContent)) != metadata.Size {
+			log.Printf("Warning: G-code size mismatch for %s (downloaded %d bytes, metadata %d bytes)",
+				filename, len(gcodeContent), metadata.Size)
 		}
 	}
-
-	if metadata.FilamentWeightTotal > 0 {
-		return map[int]float64{0: metadata.FilamentWeightTotal}, nil
+	if metadata == nil {
+		metadata = &FilamentUsageMetadata{}
 	}
+	metadata.ExtrudersUsed = c.GetPrintTaskExtrudersUsed()
 
-	return filamentUsage, nil
+	resolution := ResolveFilamentUsage(gcodeContent, metadata)
+	logFilamentUsageResolution(filename, resolution.Source, resolution.Usage)
+	return resolution.Usage, nil
 }
 
 func normalizeMoonrakerState(state string) string {

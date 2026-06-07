@@ -34,7 +34,8 @@ func TestParseMoonrakerObjectsQuery(t *testing.T) {
 				"print_stats": {
 					"state": "printing",
 					"filename": "jobs/example.gcode",
-					"print_duration": 120.5
+					"print_duration": 120.5,
+					"filament_used": 4567.8
 				},
 				"virtual_sdcard": {
 					"progress": 0.42
@@ -58,6 +59,12 @@ func TestParseMoonrakerObjectsQuery(t *testing.T) {
 	}
 	if result.Status.PrintStats.Filename != "jobs/example.gcode" {
 		t.Fatalf("unexpected filename: %s", result.Status.PrintStats.Filename)
+	}
+	if result.Status.PrintStats.PrintDuration != 120.5 {
+		t.Fatalf("unexpected print duration: %v", result.Status.PrintStats.PrintDuration)
+	}
+	if result.Status.PrintStats.FilamentUsed != 4567.8 {
+		t.Fatalf("unexpected filament used: %v", result.Status.PrintStats.FilamentUsed)
 	}
 	if result.Status.VirtualSDCard.Progress != 0.42 {
 		t.Fatalf("unexpected progress: %v", result.Status.VirtualSDCard.Progress)

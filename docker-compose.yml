@@ -7,4 +7,10 @@ services:
       - "5000:5000"
     volumes:
       - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    # Spoolman URL must be configured in the FilaBridge web UI (Settings).
+    # When Spoolman runs on the Docker host, use:
+    #   http://host.docker.internal:8000
+    # Do NOT use localhost — inside the container that refers to FilaBridge itself.

@@ -92,6 +92,8 @@ docker-compose up -d
 
 The docker-compose.yml automatically sets the `FILABRIDGE_DB_PATH` environment variable to `/app/data` to ensure the database persists in the mounted volume.
 
+**Spoolman on the Docker host:** If Spoolman runs outside the FilaBridge container (on your PC or in another container), configure the Spoolman URL in the web UI as `http://host.docker.internal:8000` (adjust the port if needed). Do **not** use `localhost` — inside the container that address points to FilaBridge itself, not your host machine. The compose file includes `extra_hosts: host.docker.internal:host-gateway` for this on Linux; on Docker Desktop for Windows/macOS this hostname works out of the box.
+
 ### Option 2: Pre-built Binary
 
 1. **Download the latest release** for your platform from the [Releases page](https://github.com/needo37/filabridge/releases)
@@ -242,9 +244,11 @@ filabridge/
    - Verify Spoolman is accessible at the specified URL
 
 3. **Filament usage not tracked**:
-   - Ensure spools are mapped to toolheads
-   - Check that prints are completing (not just pausing)
-   - Verify PrusaLink API is returning filament usage data
+   - Ensure spools are mapped to toolheads in the FilaBridge dashboard
+   - Check that prints reach `complete` state (not only paused or error)
+   - If FilaBridge runs in Docker and Spoolman on the host, set Spoolman URL to `http://host.docker.internal:PORT` (not `localhost`)
+   - Review container logs for `Print finished detected` or `complete-state` detection
+   - Red error banners appear when G-code parsing fails, no spool is mapped, or Spoolman rejects the update
 
 4. **WebSocket connection issues**:
    - Check browser console for WebSocket connection errors

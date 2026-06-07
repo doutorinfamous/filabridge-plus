@@ -22,6 +22,7 @@ type FilamentBridge struct {
 	wasPrinting      map[string]bool
 	currentJobFile   map[string]string     // Store current job filename per printer
 	processingPrints map[string]bool       // Track prints being processed
+	pendingUsage     map[string]map[int]float64 // Cached filament usage awaiting spool update
 	printErrors      map[string]PrintError // Store print processing errors
 	errorMutex       sync.RWMutex
 	mutex            sync.RWMutex
@@ -79,6 +80,7 @@ func NewFilamentBridge(config *Config) (*FilamentBridge, error) {
 		wasPrinting:      make(map[string]bool),
 		currentJobFile:   make(map[string]string),
 		processingPrints: make(map[string]bool),
+		pendingUsage:     make(map[string]map[int]float64),
 		printErrors:      make(map[string]PrintError),
 	}
 
@@ -163,6 +165,12 @@ func (b *FilamentBridge) initDatabase() error {
 			toolhead_id INTEGER,
 			display_name TEXT NOT NULL,
 			PRIMARY KEY (printer_id, toolhead_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS processed_jobs (
+			printer_id TEXT NOT NULL,
+			filename TEXT NOT NULL,
+			processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (printer_id, filename)
 		)`,
 	}
 
@@ -971,6 +979,63 @@ func (b *FilamentBridge) LogPrintUsage(printerName string, toolheadID int, spool
 	return nil
 }
 
+// IsJobProcessed checks whether a completed job was already processed for filament usage.
+func (b *FilamentBridge) IsJobProcessed(printerID, filename string) (bool, error) {
+	if filename == "" {
+		return false, nil
+	}
+
+	var count int
+	err := b.db.QueryRow(
+		"SELECT COUNT(*) FROM processed_jobs WHERE printer_id = ? AND filename = ?",
+		printerID, filename,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check processed job: %w", err)
+	}
+	return count > 0, nil
+}
+
+// MarkJobProcessed records a job as processed to prevent duplicate filament deductions.
+func (b *FilamentBridge) MarkJobProcessed(printerID, filename string) error {
+	if filename == "" {
+		return nil
+	}
+
+	_, err := b.db.Exec(
+		"INSERT OR REPLACE INTO processed_jobs (printer_id, filename, processed_at) VALUES (?, ?, ?)",
+		printerID, filename, time.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark job as processed: %w", err)
+	}
+	return nil
+}
+
+// ClearProcessedJob removes a processed-job record so the same file can be tracked on reprint.
+func (b *FilamentBridge) ClearProcessedJob(printerID, filename string) error {
+	if filename == "" {
+		return nil
+	}
+
+	_, err := b.db.Exec(
+		"DELETE FROM processed_jobs WHERE printer_id = ? AND filename = ?",
+		printerID, filename,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to clear processed job: %w", err)
+	}
+	return nil
+}
+
+// shouldProcessCompletedJob detects finished prints that were missed by wasPrinting tracking.
+func shouldProcessCompletedJob(rawState, filename string, printDuration float64, alreadyProcessed bool) bool {
+	return strings.ToLower(strings.TrimSpace(rawState)) == MoonrakerStateComplete &&
+		filename != "" &&
+		printDuration > 0 &&
+		!alreadyProcessed
+}
+
 // MonitorPrinters monitors all printers for print status changes
 func (b *FilamentBridge) MonitorPrinters() {
 	log.Printf("Monitoring printers at %s", time.Now().Format(time.RFC3339))
@@ -1017,42 +1082,57 @@ func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) 
 	storedJobFile := b.currentJobFile[printerID]
 	b.mutex.RUnlock()
 
-	// Debug logging for all printers
-	log.Printf("Printer %s (%s): state=%s, raw_state=%s, wasPrinting=%v, job=%s, stored_file=%s",
-		config.IPAddress, printerID, currentState, rawState, wasPrinting, jobName, storedJobFile)
+	alreadyProcessed := false
+	if currentJobFilename != "" {
+		alreadyProcessed, err = b.IsJobProcessed(printerID, currentJobFilename)
+		if err != nil {
+			log.Printf("Warning: Failed to check processed job for %s (%s): %v", config.IPAddress, printerID, err)
+		}
+	}
 
-	// Check if print just finished
-	if wasPrinting && isMoonrakerFinishedState(rawState) && rawState != MoonrakerStateError {
-		// Use stored filename (should be available since we stored it when printing started)
+	missedCompletion := shouldProcessCompletedJob(rawState, currentJobFilename, printerStatus.PrintDuration, alreadyProcessed)
+	transitionFinish := wasPrinting && isMoonrakerFinishedState(rawState) && rawState != MoonrakerStateError
+
+	// Debug logging for all printers
+	log.Printf("Printer %s (%s): state=%s, raw_state=%s, wasPrinting=%v, job=%s, stored_file=%s, print_duration=%.1f, alreadyProcessed=%v",
+		config.IPAddress, printerID, currentState, rawState, wasPrinting, jobName, storedJobFile, printerStatus.PrintDuration, alreadyProcessed)
+
+	if transitionFinish || missedCompletion {
 		filenameToUse := storedJobFile
 		if filenameToUse == "" {
-			log.Printf("Warning: No stored filename for %s (%s), using current job filename: %s",
-				config.IPAddress, printerID, currentJobFilename)
 			filenameToUse = currentJobFilename
 		}
+		if filenameToUse == "" {
+			log.Printf("Warning: Print completion detected for %s (%s) but no filename available", config.IPAddress, printerID)
+		} else {
+			detectionReason := "transition"
+			if missedCompletion && !transitionFinish {
+				detectionReason = "complete-state"
+			}
 
-		log.Printf("🎉 Print finished detected for %s (%s): %s (state: %s, file: %s)",
-			config.IPAddress, printerID, jobName, currentState, filenameToUse)
+			log.Printf("Print finished detected for %s (%s): %s (state: %s, file: %s, reason: %s)",
+				config.IPAddress, printerID, jobName, currentState, filenameToUse, detectionReason)
 
-		// Mark as processing to prevent filename from being cleared
-		b.mutex.Lock()
-		b.wasPrinting[printerID] = false
-		b.processingPrints[printerID] = true
-		b.mutex.Unlock()
+			b.mutex.Lock()
+			b.wasPrinting[printerID] = false
+			b.processingPrints[printerID] = true
+			b.mutex.Unlock()
 
-		// Now process the print (this takes a long time)
-		err := b.handlePrintFinished(config, filenameToUse)
+			err := b.handlePrintFinished(printerID, config, filenameToUse, printerStatus)
 
-		// Clear processing flag and filename after completion
-		b.mutex.Lock()
-		b.processingPrints[printerID] = false
-		if err == nil {
-			b.currentJobFile[printerID] = ""
-		}
-		b.mutex.Unlock()
+			b.mutex.Lock()
+			b.processingPrints[printerID] = false
+			if err == nil {
+				b.currentJobFile[printerID] = ""
+				if markErr := b.MarkJobProcessed(printerID, filenameToUse); markErr != nil {
+					log.Printf("Warning: Failed to mark job as processed for %s (%s): %v", config.IPAddress, printerID, markErr)
+				}
+			}
+			b.mutex.Unlock()
 
-		if err != nil {
-			log.Printf("Error handling print finished: %v", err)
+			if err != nil {
+				log.Printf("Error handling print finished: %v", err)
+			}
 		}
 	} else {
 		// Update state tracking - minimize lock scope
@@ -1060,9 +1140,15 @@ func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) 
 		defer b.mutex.Unlock()
 
 		// Store the current job filename when printing starts (only if not already stored)
-		if isMoonrakerPrintingState(rawState) && currentJobFilename != "" && storedJobFile == "" {
-			b.currentJobFile[printerID] = currentJobFilename
-			log.Printf("📁 Stored job filename for %s (%s): %s", config.IPAddress, printerID, currentJobFilename)
+		if isMoonrakerPrintingState(rawState) && currentJobFilename != "" {
+			if storedJobFile == "" {
+				b.currentJobFile[printerID] = currentJobFilename
+				log.Printf("Stored job filename for %s (%s): %s", config.IPAddress, printerID, currentJobFilename)
+			}
+			if err := b.ClearProcessedJob(printerID, currentJobFilename); err != nil {
+				log.Printf("Warning: Failed to clear processed job for %s (%s): %v", config.IPAddress, printerID, err)
+			}
+			delete(b.pendingUsage, pendingUsageKey(printerID, currentJobFilename))
 		}
 
 		// Update wasPrinting flag for NEXT cycle
@@ -1077,48 +1163,99 @@ func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) 
 	return nil
 }
 
+func pendingUsageKey(printerID, filename string) string {
+	return printerID + "|" + filename
+}
+
 // handlePrintFinished handles when a print job finishes via Moonraker
-func (b *FilamentBridge) handlePrintFinished(config PrinterConfig, filename string) error {
+func (b *FilamentBridge) handlePrintFinished(printerID string, config PrinterConfig, filename string, printerStatus *MoonrakerPrinterStatus) error {
 	log.Printf("Print finished via Moonraker (%s): %s", config.IPAddress, filename)
 
 	printerName := resolvePrinterName(config)
+	cacheKey := pendingUsageKey(printerID, filename)
 
-	client := NewSnapmakerU1MoonrakerClient(config.IPAddress, config.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
-
-	// Use the filename parameter (stored when print started)
 	if filename == "" {
 		errorMsg := "no filename available for print processing"
 		b.addPrintError(printerName, "unknown", errorMsg)
 		return fmt.Errorf("%s", errorMsg)
 	}
 
-	// Download and parse the G-code file (.gcode or .bgcode) for filament usage
-	log.Printf("Analyzing G-code file for filament usage: %s", filename)
+	var filamentUsage map[int]float64
 
-	// Download with retry logic
-	filamentUsage, err := client.ParseFilamentUsageFromFile(filename, b.config.PrinterFileDownloadTimeout)
-	if err != nil {
-		errorMsg := fmt.Sprintf("failed to parse G-code for filament usage: %v", err)
-		b.addPrintError(printerName, filename, errorMsg)
-		return fmt.Errorf("%s", errorMsg)
+	b.mutex.RLock()
+	cachedUsage, hasCached := b.pendingUsage[cacheKey]
+	b.mutex.RUnlock()
+
+	if hasCached {
+		filamentUsage = cachedUsage
+		log.Printf("Using cached filament usage for %s: %+v", filename, filamentUsage)
+	} else {
+		client := NewSnapmakerU1MoonrakerClient(config.IPAddress, config.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
+
+		log.Printf("Analyzing G-code file for filament usage: %s", filename)
+
+		var err error
+		filamentUsage, err = client.ParseFilamentUsageFromFile(filename, b.config.PrinterFileDownloadTimeout)
+		if err != nil {
+			errorMsg := fmt.Sprintf("failed to parse G-code for filament usage: %v", err)
+			b.addPrintError(printerName, filename, errorMsg)
+			return fmt.Errorf("%s", errorMsg)
+		}
+
+		if len(filamentUsage) == 0 && printerStatus != nil && printerStatus.FilamentUsed > 0 {
+			if weight := b.filamentUsageFromPrintStats(printerName, printerStatus.FilamentUsed); weight > 0 {
+				log.Printf("Using print_stats.filament_used fallback: %.2fmm -> %.2fg", printerStatus.FilamentUsed, weight)
+				filamentUsage = map[int]float64{0: weight}
+			}
+		}
+
+		if len(filamentUsage) == 0 {
+			errorMsg := "no filament usage data found in G-code file or Moonraker print stats"
+			b.addPrintError(printerName, filename, errorMsg)
+			return fmt.Errorf("%s", errorMsg)
+		}
+
+		log.Printf("Successfully resolved filament usage: %+v", filamentUsage)
+
+		b.mutex.Lock()
+		b.pendingUsage[cacheKey] = filamentUsage
+		b.mutex.Unlock()
 	}
 
-	// Check if we got any filament usage data
-	if len(filamentUsage) == 0 {
-		errorMsg := "no filament usage data found in G-code file"
-		b.addPrintError(printerName, filename, errorMsg)
-		return fmt.Errorf("%s", errorMsg)
-	}
-
-	log.Printf("Successfully parsed G-code file for filament usage: %+v", filamentUsage)
-
-	// Process filament usage using helper function
 	if err := b.processFilamentUsage(printerName, filamentUsage, filename); err != nil {
 		log.Printf("Error processing filament usage: %v", err)
 		return err
 	}
 
+	b.mutex.Lock()
+	delete(b.pendingUsage, cacheKey)
+	b.mutex.Unlock()
+
 	return nil
+}
+
+// filamentUsageFromPrintStats converts Moonraker print_stats.filament_used (mm) to grams.
+func (b *FilamentBridge) filamentUsageFromPrintStats(printerName string, filamentUsedMm float64) float64 {
+	const defaultDiameter = 1.75
+	const defaultDensity = 1.24
+
+	diameter := defaultDiameter
+	density := defaultDensity
+
+	spoolID, err := b.GetToolheadMapping(printerName, 0)
+	if err == nil && spoolID > 0 {
+		spool, spoolErr := b.spoolman.GetSpool(spoolID)
+		if spoolErr == nil && spool.Filament != nil {
+			if spool.Filament.Diameter > 0 {
+				diameter = spool.Filament.Diameter
+			}
+			if spool.Filament.Density > 0 {
+				density = spool.Filament.Density
+			}
+		}
+	}
+
+	return filamentLengthMmToGrams(filamentUsedMm, diameter, density)
 }
 
 // GetPrintErrors returns all unacknowledged print errors
@@ -1163,6 +1300,12 @@ func sanitizeErrorID(s string) string {
 func (b *FilamentBridge) addPrintError(printerName, filename, errorMsg string) {
 	b.errorMutex.Lock()
 	defer b.errorMutex.Unlock()
+
+	for _, existing := range b.printErrors {
+		if !existing.Acknowledged && existing.PrinterName == printerName && existing.Filename == filename && existing.Error == errorMsg {
+			return
+		}
+	}
 
 	// Sanitize printer name and filename to ensure URL-safe error IDs
 	sanitizedPrinterName := sanitizeErrorID(printerName)
@@ -1286,51 +1429,69 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 	return status, nil
 }
 
-// processFilamentUsage processes filament usage updates for all toolheads
+// processFilamentUsage processes filament usage updates for all toolheads.
+// Extruder index from G-code maps directly to FilaBridge toolhead index (no remapping).
 func (b *FilamentBridge) processFilamentUsage(printerName string, filamentUsage map[int]float64, jobName string) error {
-	// Update Spoolman with filament usage for each toolhead
+	updatedCount := 0
+	unmappedToolheads := make([]int, 0)
+
 	for toolheadID, usedWeight := range filamentUsage {
 		if usedWeight <= 0 {
 			continue
 		}
 
-		// Get the mapped spool for this toolhead
 		spoolID, err := b.GetToolheadMapping(printerName, toolheadID)
 		if err != nil {
-			log.Printf("Error getting toolhead mapping for %s toolhead %d: %v",
-				printerName, toolheadID, err)
+			errMsg := fmt.Sprintf("error getting toolhead mapping for %s toolhead %d: %v", printerName, toolheadID, err)
+			log.Printf(errMsg)
+			b.addPrintError(printerName, jobName, errMsg)
 			continue
 		}
 
 		if spoolID == 0 {
 			log.Printf("No spool mapped to %s toolhead %d, skipping filament usage update",
 				printerName, toolheadID)
+			unmappedToolheads = append(unmappedToolheads, toolheadID)
 			continue
 		}
 
-		// Update Spoolman
 		if err := b.spoolman.UpdateSpoolUsage(spoolID, usedWeight); err != nil {
+			errMsg := fmt.Sprintf("failed to update spool %d in Spoolman: %v", spoolID, err)
 			log.Printf("Error updating spool %d usage: %v", spoolID, err)
+			b.addPrintError(printerName, jobName, errMsg)
 			continue
 		}
 
-		// Log the usage in our database
 		if err := b.LogPrintUsage(printerName, toolheadID, spoolID, usedWeight, jobName); err != nil {
 			log.Printf("Error logging print usage: %v", err)
 		}
 
+		updatedCount++
 		log.Printf("Updated spool %d: used %.2fg filament on %s toolhead %d",
 			spoolID, usedWeight, printerName, toolheadID)
 	}
 
-	// Summary log
-	if len(filamentUsage) > 0 {
-		log.Printf("✅ Print completion processing finished for %s: processed %d toolheads", printerName, len(filamentUsage))
-	} else {
-		log.Printf("⚠️  No filament usage data processed for %s", printerName)
+	for _, toolheadID := range unmappedToolheads {
+		weight := filamentUsage[toolheadID]
+		errMsg := fmt.Sprintf(
+			"G-code indica %.2fg no extruder %d, mas nenhum spool está mapeado no Toolhead %d. Mapeie o spool no toolhead correto ou configure o extruder certo no Snapmaker Orca.",
+			weight, toolheadID, toolheadID,
+		)
+		b.addPrintError(printerName, jobName, errMsg)
 	}
 
-	return nil
+	if updatedCount > 0 {
+		log.Printf("Print completion processing finished for %s: updated %d spool(s)", printerName, updatedCount)
+		return nil
+	}
+
+	if len(filamentUsage) > 0 {
+		log.Printf("No filament usage data processed for %s", printerName)
+		return fmt.Errorf("no spools were updated for print %s", jobName)
+	}
+
+	log.Printf("No filament usage data processed for %s", printerName)
+	return fmt.Errorf("no filament usage to process for print %s", jobName)
 }
 
 // isVirtualPrinterToolheadLocation checks if a location name matches the pattern

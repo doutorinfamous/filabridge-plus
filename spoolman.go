@@ -291,6 +291,33 @@ func (c *SpoolmanClient) UpdateSpool(spoolID int, data map[string]interface{}) e
 	return nil
 }
 
+// GetSpool returns a single spool by ID from Spoolman.
+func (c *SpoolmanClient) GetSpool(spoolID int) (*SpoolmanSpool, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/spool/%d", c.baseURL, spoolID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	c.addAuthHeader(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error getting spool %d from Spoolman: %w", spoolID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spool %d not found in Spoolman: %w", spoolID, c.handleAPIError(resp))
+	}
+
+	var spool SpoolmanSpool
+	if err := json.NewDecoder(resp.Body).Decode(&spool); err != nil {
+		return nil, fmt.Errorf("error decoding spool %d from Spoolman: %w", spoolID, err)
+	}
+
+	normalized := c.normalizeSpoolData(spool)
+	return &normalized, nil
+}
+
 // UpdateSpoolUsage updates spool used weight based on usage (core bridge functionality)
 func (c *SpoolmanClient) UpdateSpoolUsage(spoolID int, filamentUsed float64) error {
 	// Get current spool data

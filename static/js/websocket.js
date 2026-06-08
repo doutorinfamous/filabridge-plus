@@ -101,6 +101,26 @@ function updateConnectionStatus(status) {
     }
 }
 
+function formatDuration(seconds) {
+    if (seconds == null || seconds < 0) {
+        return '--';
+    }
+    const total = Math.round(seconds);
+    if (total <= 0) {
+        return '0s';
+    }
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    }
+    if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+    }
+    return `${secs}s`;
+}
+
 function updateDashboard(data) {
     console.log('Updating dashboard with new data:', data);
     
@@ -136,8 +156,51 @@ function updatePrinterStatuses(printers) {
         // Update status badge
         const statusBadge = printerElement.querySelector('.status');
         if (statusBadge) {
-            statusBadge.className = `status ${printerData.state}`;
+            statusBadge.className = `status ${(printerData.state || '').toLowerCase()}`;
             statusBadge.textContent = printerData.state;
+        }
+
+        const jobSection = printerElement.querySelector('.print-job-section');
+        if (!jobSection) return;
+
+        const isPrinting = printerData.state === 'PRINTING';
+        jobSection.style.display = isPrinting ? '' : 'none';
+        if (!isPrinting) return;
+
+        const jobName = jobSection.querySelector('.job-name');
+        if (jobName) {
+            jobName.textContent = printerData.job_name || '';
+        }
+
+        const progress = Math.min(100, Math.max(0, (printerData.progress || 0) * 100));
+        const progressBar = jobSection.querySelector('.print-progress-bar');
+        if (progressBar) {
+            progressBar.style.width = `${progress.toFixed(1)}%`;
+        }
+
+        const progressLabel = jobSection.querySelector('.progress-label');
+        if (progressLabel) {
+            progressLabel.textContent = `${progress.toFixed(1)}%`;
+        }
+
+        const printDuration = jobSection.querySelector('.print-duration');
+        if (printDuration) {
+            printDuration.textContent = `Elapsed: ${formatDuration(printerData.print_duration)}`;
+        }
+
+        const timeRemaining = jobSection.querySelector('.time-remaining');
+        if (timeRemaining) {
+            timeRemaining.textContent = `Remaining: ${formatDuration(printerData.time_remaining)}`;
+        }
+
+        const layerInfo = jobSection.querySelector('.layer-info');
+        if (layerInfo) {
+            if (printerData.current_layer != null && printerData.total_layer != null) {
+                layerInfo.textContent = `Layer ${printerData.current_layer} / ${printerData.total_layer}`;
+                layerInfo.style.display = '';
+            } else {
+                layerInfo.style.display = 'none';
+            }
         }
     });
 }

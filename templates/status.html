@@ -51,12 +51,29 @@
         <div class="printer" data-printer-id="{{$printerID}}">
             <div class="printer-header">
                 <h3>{{$printerData.Name}}</h3>
-                <span class="status {{$printerData.State}}">
+                <span class="status {{lower $printerData.State}}">
                     {{$printerData.State}}
                 </span>
             </div>
             
             <p><strong>Model:</strong> {{$printerConfig.Model}} ({{$printerConfig.Toolheads}} toolhead{{if ne $printerConfig.Toolheads 1}}s{{end}})</p>
+
+            <div class="print-job-section"{{if ne $printerData.State "PRINTING"}} style="display: none;"{{end}}>
+                <p class="print-job-name"><strong>Printing:</strong> <span class="job-name">{{$printerData.JobName}}</span></p>
+                <div class="print-progress">
+                    <div class="print-progress-bar" style="width: {{progressPercent $printerData.Progress}}%;"></div>
+                </div>
+                <p class="print-timing">
+                    <span class="progress-label">{{progressPercent $printerData.Progress}}%</span>
+                    · <span class="print-duration">Elapsed: {{formatDuration $printerData.PrintDuration}}</span>
+                    · <span class="time-remaining">Remaining: {{formatDurationPtr $printerData.TimeRemaining}}</span>
+                    {{if and $printerData.CurrentLayer $printerData.TotalLayer}}
+                    · <span class="layer-info">Layer {{$printerData.CurrentLayer}} / {{$printerData.TotalLayer}}</span>
+                    {{else}}
+                    <span class="layer-info" style="display: none;"></span>
+                    {{end}}
+                </p>
+            </div>
 
             <div class="mapping-section">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">

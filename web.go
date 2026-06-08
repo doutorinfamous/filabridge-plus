@@ -122,6 +122,17 @@ func (ws *WebServer) setupRoutes() {
 	// Load HTML templates with custom functions from embedded filesystem
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
 		"generateToolheadIDs": generateToolheadIDs,
+		"formatDuration":      formatDurationSeconds,
+		"formatDurationPtr": func(p *float64) string {
+			if p == nil {
+				return "--"
+			}
+			return formatDurationSeconds(*p)
+		},
+		"progressPercent": func(progress float64) string {
+			return fmt.Sprintf("%.1f", progress*100)
+		},
+		"lower": strings.ToLower,
 	}).ParseFS(templatesFS, "templates/*"))
 	ws.router.SetHTMLTemplate(tmpl)
 

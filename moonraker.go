@@ -30,6 +30,8 @@ type MoonrakerPrinterStatus struct {
 	Progress       float64
 	PrintDuration  float64
 	FilamentUsed   float64 // extruded filament length in mm from print_stats
+	CurrentLayer   *int
+	TotalLayer     *int
 }
 
 // MoonrakerPrinterInfo represents printer identification data.
@@ -49,10 +51,14 @@ type moonrakerResponse struct {
 type moonrakerObjectsQueryResult struct {
 	Status struct {
 		PrintStats struct {
-			State          string  `json:"state"`
-			Filename       string  `json:"filename"`
-			PrintDuration  float64 `json:"print_duration"`
-			FilamentUsed   float64 `json:"filament_used"`
+			State         string  `json:"state"`
+			Filename      string  `json:"filename"`
+			PrintDuration float64 `json:"print_duration"`
+			FilamentUsed  float64 `json:"filament_used"`
+			Info          struct {
+				TotalLayer   *int `json:"total_layer"`
+				CurrentLayer *int `json:"current_layer"`
+			} `json:"info"`
 		} `json:"print_stats"`
 		VirtualSDCard struct {
 			Progress float64 `json:"progress"`
@@ -74,6 +80,7 @@ type moonrakerServerInfoResult struct {
 type moonrakerFileMetadataResult struct {
 	Filename            string    `json:"filename"`
 	Size                int64     `json:"size"`
+	EstimatedTime       float64   `json:"estimated_time"`
 	FilamentTotal       float64   `json:"filament_total"`
 	FilamentWeightTotal float64   `json:"filament_weight_total"`
 	FilamentWeights     []float64 `json:"filament_weights"`
@@ -276,9 +283,52 @@ func (c *SnapmakerU1MoonrakerClient) GetPrinterStatus() (*MoonrakerPrinterStatus
 		Progress:       result.Status.VirtualSDCard.Progress,
 		PrintDuration:  result.Status.PrintStats.PrintDuration,
 		FilamentUsed:   result.Status.PrintStats.FilamentUsed,
+		CurrentLayer:   result.Status.PrintStats.Info.CurrentLayer,
+		TotalLayer:     result.Status.PrintStats.Info.TotalLayer,
 	}
 
 	return status, nil
+}
+
+// computeTimeRemainingSeconds estimates remaining print time in seconds.
+// Prefers slicer metadata; falls back to progress-based extrapolation.
+func computeTimeRemainingSeconds(printDuration, progress, estimatedTime float64) *float64 {
+	if estimatedTime > 0 {
+		remaining := estimatedTime - printDuration
+		if remaining < 0 {
+			remaining = 0
+		}
+		return &remaining
+	}
+	if progress > 0.001 && printDuration > 0 {
+		total := printDuration / progress
+		remaining := total - printDuration
+		if remaining < 0 {
+			remaining = 0
+		}
+		return &remaining
+	}
+	return nil
+}
+
+func formatDurationSeconds(seconds float64) string {
+	if seconds < 0 {
+		return "--"
+	}
+	total := int(seconds + 0.5)
+	if total <= 0 {
+		return "0s"
+	}
+	hours := total / 3600
+	minutes := (total % 3600) / 60
+	secs := total % 60
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, secs)
+	}
+	return fmt.Sprintf("%ds", secs)
 }
 
 // filamentLengthMmToGrams converts extruded filament length (mm) to weight (grams).

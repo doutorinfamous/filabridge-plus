@@ -68,8 +68,40 @@ type PrinterStatus struct {
 
 // PrinterData represents data for a single printer
 type PrinterData struct {
-	Name  string `json:"name"`
-	State string `json:"state"`
+	Name          string   `json:"name"`
+	State         string   `json:"state"`
+	JobName       string   `json:"job_name,omitempty"`
+	Progress      float64  `json:"progress,omitempty"`
+	PrintDuration float64  `json:"print_duration,omitempty"`
+	TimeRemaining *float64 `json:"time_remaining,omitempty"`
+	CurrentLayer  *int     `json:"current_layer,omitempty"`
+	TotalLayer    *int     `json:"total_layer,omitempty"`
+}
+
+func buildPrinterData(printerName string, printerStatus *MoonrakerPrinterStatus, client *SnapmakerU1MoonrakerClient) PrinterData {
+	data := PrinterData{
+		Name:  printerName,
+		State: printerStatus.State,
+	}
+	if printerStatus.State != StatePrinting {
+		return data
+	}
+
+	data.JobName = printerStatus.JobDisplayName
+	data.Progress = printerStatus.Progress
+	data.PrintDuration = printerStatus.PrintDuration
+	data.CurrentLayer = printerStatus.CurrentLayer
+	data.TotalLayer = printerStatus.TotalLayer
+
+	var estimatedTime float64
+	if printerStatus.JobFilename != "" {
+		if meta, err := client.GetFileMetadata(printerStatus.JobFilename); err == nil && meta != nil {
+			estimatedTime = meta.EstimatedTime
+		}
+	}
+	data.TimeRemaining = computeTimeRemainingSeconds(printerStatus.PrintDuration, printerStatus.Progress, estimatedTime)
+
+	return data
 }
 
 // NewFilamentBridge creates a new FilamentBridge instance
@@ -1375,10 +1407,7 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 				continue
 			}
 
-			status.Printers[printerID] = PrinterData{
-				Name:  printerName,
-				State: printerStatus.State,
-			}
+			status.Printers[printerID] = buildPrinterData(printerName, printerStatus, client)
 		}
 	} else {
 		// No printers configured

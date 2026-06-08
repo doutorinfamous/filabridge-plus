@@ -83,6 +83,51 @@ func TestIsMoonrakerPrintingState(t *testing.T) {
 	}
 }
 
+func TestComputeTimeRemainingSeconds(t *testing.T) {
+	t.Run("slicer estimate", func(t *testing.T) {
+		got := computeTimeRemainingSeconds(600, 0.5, 3600)
+		if got == nil || *got != 3000 {
+			t.Fatalf("expected 3000, got %v", got)
+		}
+	})
+
+	t.Run("slicer estimate clamps negative", func(t *testing.T) {
+		got := computeTimeRemainingSeconds(4000, 0.9, 3600)
+		if got == nil || *got != 0 {
+			t.Fatalf("expected 0, got %v", got)
+		}
+	})
+
+	t.Run("progress fallback", func(t *testing.T) {
+		got := computeTimeRemainingSeconds(120, 0.4, 0)
+		if got == nil || *got != 180 {
+			t.Fatalf("expected 180, got %v", got)
+		}
+	})
+
+	t.Run("unknown when no data", func(t *testing.T) {
+		if got := computeTimeRemainingSeconds(0, 0, 0); got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+}
+
+func TestFormatDurationSeconds(t *testing.T) {
+	tests := map[float64]string{
+		0:    "0s",
+		45:   "45s",
+		90:   "1m 30s",
+		3661: "1h 1m",
+		-1:   "--",
+	}
+
+	for input, expected := range tests {
+		if got := formatDurationSeconds(input); got != expected {
+			t.Fatalf("formatDurationSeconds(%v) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
 func TestEscapeMoonrakerFilePath(t *testing.T) {
 	got := escapeMoonrakerFilePath("jobs/test print.gcode")
 	want := "jobs/test%20print.gcode"

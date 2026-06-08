@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -12,6 +13,7 @@ type FilamentUsageMetadata struct {
 	FilamentWeights     []float64
 	FilamentWeightTotal float64
 	ReferencedTools     []int
+	ExtruderMapTable    []int  // Snapmaker U1 print_task_config.extruder_map_table (logical -> physical)
 	ExtrudersUsed       []bool // Snapmaker U1 print_task_config.extruders_used
 	Size                int64
 }
@@ -32,19 +34,21 @@ func ParseGcodeFilamentUsage(gcodeContent []byte) (map[int]float64, error) {
 // ResolveFilamentUsage resolves filament usage deterministically from G-code and optional Moonraker metadata.
 // Priority: G-code comma-separated > G-code total/single > Moonraker filament_weights >
 // Moonraker referenced_tools + total > Moonraker total on extruder 0.
+// G-code logical extruder indices may be remapped to physical toolheads via Snapmaker print_task_config.
 func ResolveFilamentUsage(gcodeContent []byte, metadata *FilamentUsageMetadata) FilamentUsageResolution {
 	content := string(gcodeContent)
 
 	if usage, source := parseGcodeCommaFilamentUsage(content); len(usage) > 0 {
-		if source == "gcode_single_extruder" {
-			if corrected, ok := applySnapmakerExtrudersUsed(usage, metadata); ok {
-				return FilamentUsageResolution{Usage: corrected, Source: "snapmaker_extruders_used"}
-			}
+		if remapped, remapSource, ok := remapSnapmakerExtruderUsage(usage, metadata); ok {
+			return FilamentUsageResolution{Usage: remapped, Source: remapSource}
 		}
 		return FilamentUsageResolution{Usage: usage, Source: source}
 	}
 
 	if usage, source := parseGcodeTotalFilamentUsage(content); len(usage) > 0 {
+		if remapped, remapSource, ok := remapSnapmakerExtruderUsage(usage, metadata); ok {
+			return FilamentUsageResolution{Usage: remapped, Source: remapSource}
+		}
 		return FilamentUsageResolution{Usage: usage, Source: source}
 	}
 
@@ -53,6 +57,9 @@ func ResolveFilamentUsage(gcodeContent []byte, metadata *FilamentUsageMetadata) 
 	}
 
 	if usage := usageFromFilamentWeights(metadata.FilamentWeights); len(usage) > 0 {
+		if remapped, remapSource, ok := remapSnapmakerExtruderUsage(usage, metadata); ok {
+			return FilamentUsageResolution{Usage: remapped, Source: remapSource}
+		}
 		return FilamentUsageResolution{Usage: usage, Source: "moonraker_filament_weights"}
 	}
 
@@ -61,8 +68,12 @@ func ResolveFilamentUsage(gcodeContent []byte, metadata *FilamentUsageMetadata) 
 	}
 
 	if metadata.FilamentWeightTotal > 0 {
+		usage := map[int]float64{0: metadata.FilamentWeightTotal}
+		if remapped, remapSource, ok := remapSnapmakerExtruderUsage(usage, metadata); ok {
+			return FilamentUsageResolution{Usage: remapped, Source: remapSource}
+		}
 		return FilamentUsageResolution{
-			Usage:  map[int]float64{0: metadata.FilamentWeightTotal},
+			Usage:  usage,
 			Source: "moonraker_weight_total",
 		}
 	}
@@ -127,39 +138,100 @@ func usageFromFilamentWeights(weights []float64) map[int]float64 {
 	return usage
 }
 
-func soleActiveExtruder(extrudersUsed []bool) (int, bool) {
-	active := -1
-	count := 0
-	for i, used := range extrudersUsed {
-		if used {
-			active = i
-			count++
+// remapSnapmakerExtruderUsage remaps logical slicer extruder indices to physical toolheads
+// using Snapmaker print_task_config (extruder_map_table, then extruders_used fallback).
+func remapSnapmakerExtruderUsage(logical map[int]float64, metadata *FilamentUsageMetadata) (physical map[int]float64, source string, ok bool) {
+	if metadata == nil || len(logical) == 0 {
+		return nil, "", false
+	}
+
+	if len(metadata.ExtruderMapTable) > 0 {
+		if remapped, changed := remapViaExtruderMapTable(logical, metadata.ExtruderMapTable); changed {
+			log.Printf("Snapmaker extruder remap (extruder_map_table): before=%v after=%v", logical, remapped)
+			return remapped, "snapmaker_extruder_map", true
 		}
 	}
-	if count == 1 && active >= 0 {
-		return active, true
+
+	if len(metadata.ExtrudersUsed) > 0 {
+		if remapped, changed := remapViaExtrudersUsed(logical, metadata.ExtrudersUsed); changed {
+			log.Printf("Snapmaker extruder remap (extruders_used): before=%v after=%v", logical, remapped)
+			return remapped, "snapmaker_extruders_used", true
+		}
 	}
-	return 0, false
+
+	return nil, "", false
 }
 
-// applySnapmakerExtrudersUsed remaps single-value G-code usage when Snapmaker firmware
-// reports exactly one active extruder (print_task_config.extruders_used).
-func applySnapmakerExtrudersUsed(usage map[int]float64, metadata *FilamentUsageMetadata) (map[int]float64, bool) {
-	if metadata == nil || len(usage) != 1 {
-		return nil, false
-	}
-	var weight float64
-	for id, w := range usage {
-		if id != 0 || w <= 0 {
-			return nil, false
+func remapViaExtruderMapTable(logical map[int]float64, mapTable []int) (map[int]float64, bool) {
+	physical := make(map[int]float64)
+	changed := false
+
+	for logicalIdx, weight := range logical {
+		if logicalIdx >= len(mapTable) {
+			log.Printf("Warning: logical extruder %d out of extruder_map_table range (%d entries)", logicalIdx, len(mapTable))
+			continue
 		}
-		weight = w
+		physicalIdx := mapTable[logicalIdx]
+		physical[physicalIdx] += weight
+		if physicalIdx != logicalIdx {
+			changed = true
+		}
 	}
-	extruder, ok := soleActiveExtruder(metadata.ExtrudersUsed)
-	if !ok || extruder == 0 {
+
+	if len(physical) == 0 {
 		return nil, false
 	}
-	return map[int]float64{extruder: weight}, true
+	return physical, changed
+}
+
+func remapViaExtrudersUsed(logical map[int]float64, extrudersUsed []bool) (map[int]float64, bool) {
+	logicalIndices := sortedUsageIndices(logical)
+	physicalIndices := sortedActiveExtruderIndices(extrudersUsed)
+
+	if len(logicalIndices) == 0 || len(physicalIndices) == 0 {
+		return nil, false
+	}
+
+	if len(logicalIndices) != len(physicalIndices) {
+		log.Printf("Warning: cannot pair G-code extruders %v with extruders_used %v (count mismatch)", logicalIndices, physicalIndices)
+		return nil, false
+	}
+
+	aligned := true
+	for i, logicalIdx := range logicalIndices {
+		if logicalIdx != physicalIndices[i] {
+			aligned = false
+			break
+		}
+	}
+	if aligned {
+		return nil, false
+	}
+
+	physical := make(map[int]float64, len(logicalIndices))
+	for i, logicalIdx := range logicalIndices {
+		physical[physicalIndices[i]] = logical[logicalIdx]
+	}
+	return physical, true
+}
+
+func sortedUsageIndices(usage map[int]float64) []int {
+	indices := make([]int, 0, len(usage))
+	for i := range usage {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices)
+	return indices
+}
+
+func sortedActiveExtruderIndices(extrudersUsed []bool) []int {
+	indices := make([]int, 0)
+	for i, used := range extrudersUsed {
+		if used {
+			indices = append(indices, i)
+		}
+	}
+	return indices
 }
 
 func usageFromReferencedTools(tools []int, totalWeight float64) map[int]float64 {

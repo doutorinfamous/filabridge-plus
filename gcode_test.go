@@ -148,3 +148,131 @@ func TestResolveFilamentUsageSnapmakerExtrudersUsedNoRemapWhenActiveIsZero(t *te
 		t.Fatalf("expected extruder 0 usage, got %v", resolution.Usage)
 	}
 }
+
+func TestResolveFilamentUsageSnapmakerExtrudersUsedCommaFormat(t *testing.T) {
+	content := []byte(`; filament used [g] = 76.35, 0.00, 0.00, 0.00`)
+	metadata := &FilamentUsageMetadata{
+		ExtrudersUsed: []bool{false, true, false, false},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "snapmaker_extruders_used" {
+		t.Fatalf("expected snapmaker_extruders_used, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 76.35 {
+		t.Fatalf("expected extruder 1 usage 76.35g, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerExtruderMapTable(t *testing.T) {
+	content := []byte(`; filament used [g] = 76.35, 0.00, 0.00, 0.00`)
+	metadata := &FilamentUsageMetadata{
+		ExtruderMapTable: []int{1, 0, 2, 3},
+		ExtrudersUsed:    []bool{false, true, false, false},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "snapmaker_extruder_map" {
+		t.Fatalf("expected snapmaker_extruder_map, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 76.35 {
+		t.Fatalf("expected extruder 1 usage 76.35g, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerExtruderMapTableTwoColors(t *testing.T) {
+	content := []byte(`; filament used [g] = 50, 30, 0, 0`)
+	metadata := &FilamentUsageMetadata{
+		ExtruderMapTable: []int{1, 3, 2, 0},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "snapmaker_extruder_map" {
+		t.Fatalf("expected snapmaker_extruder_map, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 50 {
+		t.Fatalf("expected extruder 1 usage 50g, got %v", resolution.Usage)
+	}
+	if resolution.Usage[3] != 30 {
+		t.Fatalf("expected extruder 3 usage 30g, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerExtrudersUsedTwoColors(t *testing.T) {
+	content := []byte(`; filament used [g] = 50, 30, 0, 0`)
+	metadata := &FilamentUsageMetadata{
+		ExtrudersUsed: []bool{false, true, false, true},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "snapmaker_extruders_used" {
+		t.Fatalf("expected snapmaker_extruders_used, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 50 {
+		t.Fatalf("expected extruder 1 usage 50g, got %v", resolution.Usage)
+	}
+	if resolution.Usage[3] != 30 {
+		t.Fatalf("expected extruder 3 usage 30g, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerIdentityMapNoRemap(t *testing.T) {
+	content := []byte(`; filament used [g] = 12.34, 5.67`)
+	metadata := &FilamentUsageMetadata{
+		ExtruderMapTable: []int{0, 1, 2, 3},
+		ExtrudersUsed:    []bool{true, true, false, false},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "gcode_comma" {
+		t.Fatalf("expected gcode_comma without remap, got %s", resolution.Source)
+	}
+	if resolution.Usage[0] != 12.34 || resolution.Usage[1] != 5.67 {
+		t.Fatalf("expected unchanged usage, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerExtrudersUsedCountMismatch(t *testing.T) {
+	content := []byte(`; filament used [g] = 50, 30, 0, 0`)
+	metadata := &FilamentUsageMetadata{
+		ExtrudersUsed: []bool{true, true, true, true},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "gcode_comma" {
+		t.Fatalf("expected gcode_comma without remap on count mismatch, got %s", resolution.Source)
+	}
+	if resolution.Usage[0] != 50 || resolution.Usage[1] != 30 {
+		t.Fatalf("expected original usage, got %v", resolution.Usage)
+	}
+}
+
+func TestResolveFilamentUsageSnapmakerExtruderMapTableRemapsFilamentWeights(t *testing.T) {
+	metadata := &FilamentUsageMetadata{
+		FilamentWeights:  []float64{76.35, 0, 0, 0},
+		ExtruderMapTable: []int{1, 0, 2, 3},
+	}
+
+	resolution := ResolveFilamentUsage([]byte("; no gcode footer"), metadata)
+	if resolution.Source != "snapmaker_extruder_map" {
+		t.Fatalf("expected snapmaker_extruder_map, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 76.35 {
+		t.Fatalf("expected extruder 1 usage 76.35g, got %v", resolution.Usage)
+	}
+}
+
+func TestRemapSnapmakerExtruderUsageGcodeTotal(t *testing.T) {
+	content := []byte(`; total filament used [g] = 42.5`)
+	metadata := &FilamentUsageMetadata{
+		ExtrudersUsed: []bool{false, true, false, false},
+	}
+
+	resolution := ResolveFilamentUsage(content, metadata)
+	if resolution.Source != "snapmaker_extruders_used" {
+		t.Fatalf("expected snapmaker_extruders_used, got %s", resolution.Source)
+	}
+	if resolution.Usage[1] != 42.5 {
+		t.Fatalf("expected extruder 1 usage 42.5g, got %v", resolution.Usage)
+	}
+}

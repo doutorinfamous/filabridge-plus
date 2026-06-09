@@ -47,7 +47,7 @@ type SpoolmanSpool struct {
 	Name     string `json:"name"`     // Computed from filament.name
 	Brand    string `json:"brand"`    // Computed from filament.vendor.name
 	Material string `json:"material"` // Computed from filament.material
-	Location string `json:"location"` // Spool location (e.g., "Printer1 - Toolhead 0") - kept for backward compatibility
+	Location string `json:"location"` // Spool location (e.g., "Printer1 - Toolhead 1")
 }
 
 // SpoolmanFilament represents a filament type from Spoolman
@@ -418,6 +418,10 @@ func (c *SpoolmanClient) getConfiguredLocationNames() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return []string{}, nil
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.handleAPIError(resp)
 	}
@@ -545,6 +549,60 @@ func (c *SpoolmanClient) GetLocations() ([]SpoolmanLocation, error) {
 	}
 
 	return mergeSpoolmanLocations(configured, spoolDerived), nil
+}
+
+// setConfiguredLocations writes the full locations list to Spoolman settings.
+func (c *SpoolmanClient) setConfiguredLocations(names []string) error {
+	jsonData, err := json.Marshal(names)
+	if err != nil {
+		return fmt.Errorf("failed to marshal locations list: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/setting/locations", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("error creating POST request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.addAuthHeader(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error setting locations in Spoolman: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.handleAPIError(resp)
+	}
+
+	return nil
+}
+
+// EnsureConfiguredLocation adds a location name to Spoolman settings if not already present.
+func (c *SpoolmanClient) EnsureConfiguredLocation(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("location name cannot be empty")
+	}
+
+	names, err := c.getConfiguredLocationNames()
+	if err != nil {
+		return fmt.Errorf("failed to get configured locations: %w", err)
+	}
+
+	for _, existing := range names {
+		if existing == name {
+			return nil
+		}
+	}
+
+	names = append(names, name)
+	if err := c.setConfiguredLocations(names); err != nil {
+		return fmt.Errorf("failed to add location '%s' to Spoolman settings: %w", name, err)
+	}
+
+	log.Printf("Added Spoolman configured location '%s'", name)
+	return nil
 }
 
 // GetOrCreateLocation gets an existing location by name

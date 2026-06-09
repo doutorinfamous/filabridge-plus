@@ -178,7 +178,7 @@ func TestProcessFilamentUsageDoesNotRemapAcrossMappedToolheads(t *testing.T) {
 	errors := bridge.GetPrintErrors()
 	foundExtruder0Error := false
 	for _, pe := range errors {
-		if strings.Contains(pe.Error, "extruder 0") && strings.Contains(pe.Error, "Toolhead 0") {
+		if strings.Contains(pe.Error, "extruder 0") && strings.Contains(pe.Error, "Toolhead 1") {
 			foundExtruder0Error = true
 		}
 	}

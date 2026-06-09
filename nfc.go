@@ -56,7 +56,7 @@ func (b *FilamentBridge) parseLocationParam(location string) (printerName string
 						}
 						// Also check default names
 						for tid := 0; tid < printerConfig.Toolheads; tid++ {
-							defaultName := fmt.Sprintf("Toolhead %d", tid)
+							defaultName := DefaultToolheadDisplayName(tid)
 							if defaultName == toolheadPart {
 								return printerName, tid, location, true, nil
 							}
@@ -65,23 +65,19 @@ func (b *FilamentBridge) parseLocationParam(location string) (printerName string
 				}
 			}
 
-			// If no custom name match found, try to parse as numeric ID (old format: "Toolhead N")
-			// This maintains backward compatibility for numeric-only toolhead IDs
+			// Parse user-facing toolhead number (1-based): "Toolhead N" -> toolhead_id N-1
 			if strings.HasPrefix(toolheadPart, "Toolhead ") {
-				toolheadIDStr := strings.TrimPrefix(toolheadPart, "Toolhead ")
-				toolheadID, err = strconv.Atoi(toolheadIDStr)
-				if err == nil {
-					// Validate that the parsed numeric ID exists for this printer
-					// This prevents matching "Toolhead 1" to a non-existent toolhead when it's actually a custom name
+				toolheadNumStr := strings.TrimPrefix(toolheadPart, "Toolhead ")
+				toolheadNum, err := strconv.Atoi(toolheadNumStr)
+				if err == nil && toolheadNum >= 1 {
+					toolheadID := toolheadNum - 1
 					printerConfigs, err := b.GetAllPrinterConfigs()
 					if err == nil {
 						for _, printerConfig := range printerConfigs {
 							if printerConfig.Name == printerName {
-								// Verify the numeric ID is within valid range
 								if toolheadID >= 0 && toolheadID < printerConfig.Toolheads {
 									return printerName, toolheadID, location, true, nil
 								}
-								// If numeric ID is out of range, don't return it - treat as regular location
 								break
 							}
 						}
@@ -282,14 +278,14 @@ func (b *FilamentBridge) AssignSpoolToLocation(spoolID int, printerName string, 
 					if err == nil {
 						displayName = name
 					} else {
-						displayName = fmt.Sprintf("Toolhead %d", toolheadID)
+						displayName = DefaultToolheadDisplayName(toolheadID)
 					}
 					break
 				}
 			}
 		}
 		if displayName == "" {
-			displayName = fmt.Sprintf("Toolhead %d", toolheadID)
+			displayName = DefaultToolheadDisplayName(toolheadID)
 		}
 
 		// Update Spoolman location using proper location entities with custom name

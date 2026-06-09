@@ -103,3 +103,71 @@ func TestGetLocationsFallsBackWhenSettingUnavailable(t *testing.T) {
 		t.Fatalf("expected spool-derived location only, got %+v", locations)
 	}
 }
+
+func TestEnsureConfiguredLocationAddsNewName(t *testing.T) {
+	var posted []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/setting/locations":
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{
+				Value: `["Drybox"]`,
+				IsSet: true,
+				Type:  "array",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/setting/locations":
+			var names []string
+			if err := json.NewDecoder(r.Body).Decode(&names); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			posted = names
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{
+				Value: `["Drybox","My Printer - Toolhead 1"]`,
+				IsSet: true,
+				Type:  "array",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSpoolmanClient(server.URL, 5, "", "")
+	if err := client.EnsureConfiguredLocation("My Printer - Toolhead 1"); err != nil {
+		t.Fatalf("EnsureConfiguredLocation failed: %v", err)
+	}
+	if len(posted) != 2 || posted[1] != "My Printer - Toolhead 1" {
+		t.Fatalf("expected posted locations with new entry, got %+v", posted)
+	}
+}
+
+func TestEnsureConfiguredLocationIsIdempotent(t *testing.T) {
+	postCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/setting/locations":
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{
+				Value: `["Drybox"]`,
+				IsSet: true,
+				Type:  "array",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/setting/locations":
+			postCount++
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{Value: `["Drybox"]`, IsSet: true, Type: "array"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSpoolmanClient(server.URL, 5, "", "")
+	if err := client.EnsureConfiguredLocation("Drybox"); err != nil {
+		t.Fatalf("EnsureConfiguredLocation failed: %v", err)
+	}
+	if postCount != 0 {
+		t.Fatalf("expected no POST when location already exists, got %d", postCount)
+	}
+}

@@ -27,11 +27,11 @@ function loadPrinters() {
                     let toolheadNamesHTML = '';
                     const toolheadNames = printer.toolhead_names || {};
                     for (let toolheadID = 0; toolheadID < (printer.toolheads || 1); toolheadID++) {
-                        const currentName = toolheadNames[toolheadID] || `Toolhead ${toolheadID}`;
+                        const currentName = toolheadNames[toolheadID] || `Toolhead ${toolheadID + 1}`;
                         const escapedName = escapeHtmlAttribute(currentName);
                         toolheadNamesHTML += `
                             <div class="form-row" style="margin-bottom: 10px;">
-                                <label style="min-width: 120px;">Toolhead ${toolheadID}:</label>
+                                <label style="min-width: 120px;">Toolhead ${toolheadID + 1}:</label>
                                 <input type="text" 
                                        id="toolhead-name-${printerId}-${toolheadID}" 
                                        value="${escapedName}" 

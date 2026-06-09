@@ -121,7 +121,8 @@ func generateToolheadIDs(count int) []int {
 func (ws *WebServer) setupRoutes() {
 	// Load HTML templates with custom functions from embedded filesystem
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-		"generateToolheadIDs": generateToolheadIDs,
+		"generateToolheadIDs":        generateToolheadIDs,
+		"defaultToolheadDisplayName": DefaultToolheadDisplayName,
 		"formatDuration":      formatDurationSeconds,
 		"formatDurationPtr": func(p *float64) string {
 			if p == nil {
@@ -728,7 +729,7 @@ func (ws *WebServer) getPrintersHandler(c *gin.Context) {
 				if name, exists := toolheadNames[toolheadID]; exists {
 					toolheadNamesMap[toolheadID] = name
 				} else {
-					toolheadNamesMap[toolheadID] = fmt.Sprintf("Toolhead %d", toolheadID)
+					toolheadNamesMap[toolheadID] = DefaultToolheadDisplayName(toolheadID)
 				}
 			}
 			printerData["toolhead_names"] = toolheadNamesMap
@@ -779,6 +780,8 @@ func (ws *WebServer) addPrinterHandler(c *gin.Context) {
 		return
 	}
 
+	ws.bridge.EnsurePrinterToolheadLocationsInSpoolman(printerID, printerConfig.Name, 0, printerConfig.Toolheads)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Printer added successfully", "printer_id": printerID})
 }
 
@@ -789,6 +792,13 @@ func (ws *WebServer) updatePrinterHandler(c *gin.Context) {
 	defer ws.operationMutex.Unlock()
 
 	printerID := c.Param("id")
+
+	oldPrinterConfigs, err := ws.bridge.GetAllPrinterConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	oldPrinterConfig, hadOldConfig := oldPrinterConfigs[printerID]
 
 	var printerConfig PrinterConfig
 	if err := c.ShouldBindJSON(&printerConfig); err != nil {
@@ -841,6 +851,15 @@ func (ws *WebServer) updatePrinterHandler(c *gin.Context) {
 	if err := ws.reloadBridgeConfig(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reload configuration"})
 		return
+	}
+
+	if hadOldConfig && printerConfig.Toolheads > oldPrinterConfig.Toolheads {
+		ws.bridge.EnsurePrinterToolheadLocationsInSpoolman(
+			printerID,
+			printerConfig.Name,
+			oldPrinterConfig.Toolheads,
+			printerConfig.Toolheads,
+		)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Printer updated successfully"})
@@ -899,7 +918,7 @@ func (ws *WebServer) getToolheadNamesHandler(c *gin.Context) {
 		if name, exists := toolheadNames[toolheadID]; exists {
 			result[toolheadID] = name
 		} else {
-			result[toolheadID] = fmt.Sprintf("Toolhead %d", toolheadID)
+			result[toolheadID] = DefaultToolheadDisplayName(toolheadID)
 		}
 	}
 
@@ -1240,13 +1259,27 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 		// Clean up session
 		ws.bridge.deleteSession(sessionID)
 
+		toolheadDisplayName := DefaultToolheadDisplayName(session.ToolheadID)
+		printerConfigs, err := ws.bridge.GetAllPrinterConfigs()
+		if err == nil {
+			for printerID, cfg := range printerConfigs {
+				if cfg.Name == session.PrinterName {
+					if name, nameErr := ws.bridge.GetToolheadName(printerID, session.ToolheadID); nameErr == nil {
+						toolheadDisplayName = name
+					}
+					break
+				}
+			}
+		}
+
 		// Show success page
 		c.HTML(http.StatusOK, "nfc_success.html", gin.H{
-			"SpoolID":           session.SpoolID,
-			"PrinterName":       session.PrinterName,
-			"ToolheadID":        session.ToolheadID,
-			"IsPrinterLocation": session.IsPrinterLocation,
-			"LocationName":      session.LocationName,
+			"SpoolID":             session.SpoolID,
+			"PrinterName":         session.PrinterName,
+			"ToolheadID":          session.ToolheadID,
+			"ToolheadDisplayName": toolheadDisplayName,
+			"IsPrinterLocation":   session.IsPrinterLocation,
+			"LocationName":        session.LocationName,
 		})
 		return
 	}
@@ -1257,7 +1290,7 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 		message = fmt.Sprintf("Spool %d selected. Now scan a location tag.", session.SpoolID)
 	} else if session.HasLocation && !session.HasSpool {
 		if session.IsPrinterLocation {
-			message = fmt.Sprintf("Location %s - Toolhead %d selected. Now scan a spool tag.", session.PrinterName, session.ToolheadID)
+			message = fmt.Sprintf("Location '%s' selected. Now scan a spool tag.", session.LocationName)
 		} else {
 			message = fmt.Sprintf("Location '%s' selected. Now scan a spool tag.", session.LocationName)
 		}
@@ -1422,7 +1455,7 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			if name, exists := toolheadNames[toolheadID]; exists {
 				displayName = name
 			} else {
-				displayName = fmt.Sprintf("Toolhead %d", toolheadID)
+				displayName = DefaultToolheadDisplayName(toolheadID)
 			}
 			locationName := fmt.Sprintf("%s - %s", printerConfig.Name, displayName)
 			printerLocationNames[locationName] = true

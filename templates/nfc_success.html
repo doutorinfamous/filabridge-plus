@@ -105,7 +105,7 @@
             </div>
             <div class="detail-row">
                 <span class="detail-label">Toolhead:</span>
-                <span class="detail-value">{{.ToolheadID}}</span>
+                <span class="detail-value">{{if .ToolheadDisplayName}}{{.ToolheadDisplayName}}{{else}}{{.LocationName}}{{end}}</span>
             </div>
             {{else}}
             <div class="detail-row">

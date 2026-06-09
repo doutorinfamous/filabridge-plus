@@ -367,14 +367,11 @@ func (b *FilamentBridge) migrateToolheadMappingsToSpoolman() error {
 			if name, exists := toolheadNames[toolheadID]; exists {
 				displayName = name
 			} else {
-				displayName = fmt.Sprintf("Toolhead %d", toolheadID)
+				displayName = DefaultToolheadDisplayName(toolheadID)
 			}
 
 			locationName := fmt.Sprintf("%s - %s", printerName, displayName)
 
-			// Check if location exists in Spoolman
-			// Note: Spoolman API doesn't support creating locations via POST.
-			// Locations will be auto-created when spools are assigned to toolheads.
 			existingLocation, err := b.spoolman.FindLocationByName(locationName)
 			if err != nil {
 				log.Printf("Warning: Failed to check if toolhead location '%s' exists in Spoolman: %v", locationName, err)
@@ -595,7 +592,12 @@ func (b *FilamentBridge) DeletePrinterConfig(printerID string) error {
 	return nil
 }
 
-// GetToolheadName gets the display name for a toolhead, or returns default "Toolhead {ID}"
+// DefaultToolheadDisplayName returns the user-facing default name for a toolhead (1-based).
+func DefaultToolheadDisplayName(toolheadID int) string {
+	return fmt.Sprintf("Toolhead %d", toolheadID+1)
+}
+
+// GetToolheadName gets the display name for a toolhead, or returns default "Toolhead {N}" (1-based).
 func (b *FilamentBridge) GetToolheadName(printerID string, toolheadID int) (string, error) {
 	b.mutex.RLock()
 	defer b.mutex.RUnlock()
@@ -607,8 +609,7 @@ func (b *FilamentBridge) GetToolheadName(printerID string, toolheadID int) (stri
 	).Scan(&displayName)
 
 	if err == sql.ErrNoRows {
-		// Return default name if not found
-		return fmt.Sprintf("Toolhead %d", toolheadID), nil
+		return DefaultToolheadDisplayName(toolheadID), nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to get toolhead name: %w", err)
@@ -644,7 +645,7 @@ func (b *FilamentBridge) SetToolheadName(printerID string, toolheadID int, name 
 	if err == nil {
 		oldDisplayName = oldName
 	} else {
-		oldDisplayName = fmt.Sprintf("Toolhead %d", toolheadID)
+		oldDisplayName = DefaultToolheadDisplayName(toolheadID)
 	}
 
 	oldLocationName := fmt.Sprintf("%s - %s", printerName, oldDisplayName)
@@ -721,6 +722,21 @@ func (b *FilamentBridge) GetAllToolheadNames(printerID string) (map[int]string, 
 	}
 
 	return names, nil
+}
+
+// EnsurePrinterToolheadLocationsInSpoolman registers empty toolhead locations in Spoolman settings.
+// fromToolheadID is inclusive; toolheadCount is the total number of toolheads on the printer.
+func (b *FilamentBridge) EnsurePrinterToolheadLocationsInSpoolman(printerID, printerName string, fromToolheadID, toolheadCount int) {
+	for toolheadID := fromToolheadID; toolheadID < toolheadCount; toolheadID++ {
+		displayName, err := b.GetToolheadName(printerID, toolheadID)
+		if err != nil {
+			displayName = DefaultToolheadDisplayName(toolheadID)
+		}
+		locationName := fmt.Sprintf("%s - %s", printerName, displayName)
+		if err := b.spoolman.EnsureConfiguredLocation(locationName); err != nil {
+			log.Printf("Warning: Failed to ensure Spoolman location '%s': %v", locationName, err)
+		}
+	}
 }
 
 // GetConfigSnapshot returns a snapshot of the current config for safe iteration
@@ -1442,7 +1458,7 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 			if name, exists := toolheadNames[toolheadID]; exists {
 				displayName = name
 			} else {
-				displayName = fmt.Sprintf("Toolhead %d", toolheadID)
+				displayName = DefaultToolheadDisplayName(toolheadID)
 			}
 
 			// If this toolhead has a mapping, use it and add display name
@@ -1510,8 +1526,8 @@ func (b *FilamentBridge) processFilamentUsage(printerName string, filamentUsage 
 	for _, toolheadID := range unmappedToolheads {
 		weight := filamentUsage[toolheadID]
 		errMsg := fmt.Sprintf(
-			"G-code indica %.2fg no extruder %d, mas nenhum spool está mapeado no Toolhead %d. Mapeie o spool no toolhead correto ou configure o extruder certo no Snapmaker Orca.",
-			weight, toolheadID, toolheadID,
+			"G-code indica %.2fg no extruder %d, mas nenhum spool está mapeado no %s. Mapeie o spool no toolhead correto ou configure o extruder certo no Snapmaker Orca.",
+			weight, toolheadID, DefaultToolheadDisplayName(toolheadID),
 		)
 		b.addPrintError(printerName, jobName, errMsg)
 	}
@@ -1531,7 +1547,7 @@ func (b *FilamentBridge) processFilamentUsage(printerName string, filamentUsage 
 }
 
 // isVirtualPrinterToolheadLocation checks if a location name matches the pattern
-// of a virtual printer toolhead location (e.g., "PrinterName - Toolhead 0" or "PrinterName - Black")
+// of a virtual printer toolhead location (e.g., "PrinterName - Toolhead 1" or "PrinterName - Black")
 func (b *FilamentBridge) isVirtualPrinterToolheadLocation(name string) bool {
 	// Get all printer configurations
 	printerConfigs, err := b.GetAllPrinterConfigs()
@@ -1551,8 +1567,7 @@ func (b *FilamentBridge) isVirtualPrinterToolheadLocation(name string) bool {
 		}
 
 		for toolheadID := 0; toolheadID < printerConfig.Toolheads; toolheadID++ {
-			// Check default pattern
-			expectedNameDefault := fmt.Sprintf("%s - Toolhead %d", printerConfig.Name, toolheadID)
+			expectedNameDefault := fmt.Sprintf("%s - %s", printerConfig.Name, DefaultToolheadDisplayName(toolheadID))
 			if name == expectedNameDefault {
 				return true
 			}

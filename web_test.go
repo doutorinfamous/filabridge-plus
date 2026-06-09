@@ -83,8 +83,8 @@ func TestMapToolheadHandlerUpdatesSpoolmanLocation(t *testing.T) {
 	if patchedSpoolID != 42 {
 		t.Fatalf("expected Spoolman PATCH for spool 42, got %d", patchedSpoolID)
 	}
-	if patchedLocation != "My Printer - Toolhead 0" {
-		t.Fatalf("expected Spoolman location %q, got %q", "My Printer - Toolhead 0", patchedLocation)
+	if patchedLocation != "My Printer - Toolhead 1" {
+		t.Fatalf("expected Spoolman location %q, got %q", "My Printer - Toolhead 1", patchedLocation)
 	}
 }
 
@@ -154,5 +154,51 @@ func TestMapToolheadHandlerUnmapAutoAssignsToStorage(t *testing.T) {
 	}
 	if !foundStoragePatch {
 		t.Fatalf("expected Spoolman PATCH moving spool 10 to Drybox, got %+v", patches)
+	}
+}
+
+func TestAddPrinterHandlerCreatesSpoolmanToolheadLocations(t *testing.T) {
+	configured := []string{}
+
+	_, ws := newTestBridgeWithSpoolman(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/setting/locations":
+			value, _ := json.Marshal(configured)
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{
+				Value: string(value),
+				IsSet: true,
+				Type:  "array",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/setting/locations":
+			if err := json.NewDecoder(r.Body).Decode(&configured); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			value, _ := json.Marshal(configured)
+			json.NewEncoder(w).Encode(spoolmanSettingResponse{Value: string(value), IsSet: true, Type: "array"})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	body := `{"name":"XL","model":"Unknown","ip_address":"192.168.1.10","api_key":"","toolheads":2}`
+	req := httptest.NewRequest(http.MethodPost, "/api/printers", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	ws.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	expected := []string{"XL - Toolhead 1", "XL - Toolhead 2"}
+	if len(configured) != len(expected) {
+		t.Fatalf("expected %d configured locations, got %+v", len(expected), configured)
+	}
+	for i, name := range expected {
+		if configured[i] != name {
+			t.Fatalf("expected location %q at index %d, got %q", name, i, configured[i])
+		}
 	}
 }

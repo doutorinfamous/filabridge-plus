@@ -47,6 +47,20 @@ const (
 	ConfigKeySpoolmanPassword             = "spoolman_password"
 	ConfigKeyAutoAssignPreviousSpoolEnabled = "auto_assign_previous_spool_enabled"
 	ConfigKeyAutoAssignPreviousSpoolLocation = "auto_assign_previous_spool_location"
+	ConfigKeyHAURL                         = "ha_url"
+	ConfigKeyHAToken                       = "ha_token"
+	ConfigKeyFilabridgePublicURL           = "filabridge_public_url"
+)
+
+// Printer drivers
+const (
+	DriverMoonraker = "moonraker"
+	DriverBambuHA   = "bambu_ha"
+)
+
+// Printer models
+const (
+	ModelBambuHA = "Bambu Lab (Home Assistant)"
 )
 
 // HTTP timeouts

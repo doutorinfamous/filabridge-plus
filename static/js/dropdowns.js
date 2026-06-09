@@ -353,17 +353,8 @@ async function autoMapSpool(dropdown, selectedValue, selectedText, selectedColor
             `;
         }, 2000);
         
-        // Only remove spools from other dropdowns if we're mapping a spool (not unmapping)
-        if (selectedValue !== '0') {
-            // Immediately remove the mapped spool from all other dropdowns
-            removeSpoolFromOtherDropdowns(selectedValue);
-            
-            // Refresh all other dropdowns to update available spools
-            refreshAllDropdowns();
-        } else {
-            // If unmapping, just refresh all dropdowns to show the newly available spool
-            refreshAllDropdowns();
-        }
+        // Refresh Moonraker dropdowns; Bambu tray buttons are not reset here
+        await refreshAllDropdowns();
         
     } catch (error) {
         console.error('Error mapping spool:', error);

@@ -180,6 +180,7 @@ func (ws *WebServer) setupRoutes() {
 		api.POST("/locations", ws.createLocationHandler)
 		api.PUT("/locations/:name", ws.updateLocationHandler)
 		api.DELETE("/locations/:name", ws.deleteLocationHandler)
+		ws.registerBambuRoutes(api)
 	}
 
 	// WebSocket endpoint
@@ -396,6 +397,14 @@ func (ws *WebServer) dashboardHandler(c *gin.Context) {
 	printErrors := ws.bridge.GetPrintErrors()
 	hasPrintErrors := len(printErrors) > 0
 
+	moonrakerPrinters := make(map[string]PrinterConfig)
+	for printerID, printerConfig := range ws.bridge.config.Printers {
+		if printerID == "no_printers" || printerConfig.Driver == DriverBambuHA {
+			continue
+		}
+		moonrakerPrinters[printerID] = printerConfig
+	}
+
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"Status":            status,
 		"Spools":            spools,
@@ -403,7 +412,7 @@ func (ws *WebServer) dashboardHandler(c *gin.Context) {
 		"HasPrintErrors":    hasPrintErrors,
 		"PrintErrors":       printErrors,
 		"IsFirstRun":        isFirstRun,
-		"Printers":          ws.bridge.config.Printers,
+		"Printers":          moonrakerPrinters,
 		"SpoolmanConnected": spoolmanConnected,
 		"SpoolmanError":     spoolmanError,
 		"SpoolmanBaseURL":   ws.bridge.config.SpoolmanURL,
@@ -454,6 +463,9 @@ func (ws *WebServer) filamentsHandler(c *gin.Context) {
 func validatePrinterConfig(config PrinterConfig) error {
 	if config.Name == "" {
 		return fmt.Errorf("printer name is required")
+	}
+	if config.Driver == DriverBambuHA {
+		return nil
 	}
 	if config.IPAddress == "" {
 		return fmt.Errorf("address is required")
@@ -527,18 +539,7 @@ func (ws *WebServer) mapToolheadHandler(c *gin.Context) {
 		}
 
 		if previousSpoolID > 0 {
-			enabled, err := ws.bridge.GetAutoAssignPreviousSpoolEnabled()
-			if err == nil && enabled {
-				locationName, err := ws.bridge.GetAutoAssignPreviousSpoolLocation()
-				if err == nil && locationName != "" {
-					location, err := ws.bridge.spoolman.FindLocationByName(locationName)
-					if err == nil && location != nil {
-						if err := ws.bridge.AssignSpoolToLocation(previousSpoolID, "", 0, locationName, false); err != nil {
-							log.Printf("Warning: Failed to auto-assign unmapped spool %d to location '%s': %v", previousSpoolID, locationName, err)
-						}
-					}
-				}
-			}
+			ws.bridge.tryAutoAssignSpoolToDefaultStorage(previousSpoolID)
 		}
 
 		ws.BroadcastStatus()
@@ -563,51 +564,29 @@ func (ws *WebServer) mapToolheadHandler(c *gin.Context) {
 func (ws *WebServer) availableSpoolsHandler(c *gin.Context) {
 	printerName := c.Query("printer_name")
 	toolheadIDStr := c.Query("toolhead_id")
+	trayUniqueID := c.Query("tray_unique_id")
 
-	if printerName == "" || toolheadIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "printer_name and toolhead_id parameters are required"})
+	var exclude ExcludeAssignment
+	switch {
+	case trayUniqueID != "":
+		exclude.TrayUniqueID = trayUniqueID
+	case printerName != "" && toolheadIDStr != "":
+		toolheadID, err := strconv.Atoi(toolheadIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid toolhead_id"})
+			return
+		}
+		exclude.PrinterName = printerName
+		exclude.ToolheadID = toolheadID
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provide printer_name+toolhead_id or tray_unique_id"})
 		return
 	}
 
-	toolheadID, err := strconv.Atoi(toolheadIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid toolhead_id"})
-		return
-	}
-
-	// Get all spools from Spoolman
-	allSpools, err := ws.bridge.spoolman.GetAllSpools()
+	availableSpools, err := ws.bridge.GetAvailableSpools(exclude)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-
-	// Get all current toolhead mappings
-	allMappings, err := ws.bridge.GetAllToolheadMappings()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Create a set of assigned spool IDs (excluding the current toolhead)
-	assignedSpoolIDs := make(map[int]bool)
-	for _, printerMappings := range allMappings {
-		for tid, mapping := range printerMappings {
-			// Skip the current toolhead (allow re-assignment to the same toolhead)
-			if mapping.PrinterName == printerName && tid == toolheadID {
-				continue
-			}
-			// Mark this spool as assigned (prevents same spool being used on multiple printers)
-			assignedSpoolIDs[mapping.SpoolID] = true
-		}
-	}
-
-	// Filter out assigned spools
-	var availableSpools []SpoolmanSpool
-	for _, spool := range allSpools {
-		if !assignedSpoolIDs[spool.ID] {
-			availableSpools = append(availableSpools, spool)
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"spools": availableSpools})
@@ -713,11 +692,14 @@ func (ws *WebServer) getPrintersHandler(c *gin.Context) {
 	result := make(map[string]interface{})
 	for printerID, printerConfig := range printerConfigs {
 		printerData := map[string]interface{}{
-			"name":       printerConfig.Name,
-			"model":      printerConfig.Model,
-			"ip_address": printerConfig.IPAddress,
-			"api_key":    printerConfig.APIKey,
-			"toolheads":  printerConfig.Toolheads,
+			"name":         printerConfig.Name,
+			"model":        printerConfig.Model,
+			"driver":       printerConfig.Driver,
+			"ip_address":   printerConfig.IPAddress,
+			"api_key":      printerConfig.APIKey,
+			"toolheads":    printerConfig.Toolheads,
+			"ha_prefix":    printerConfig.HAPrefix,
+			"ha_device_id": printerConfig.HADeviceID,
 		}
 
 		// Get toolhead names for this printer
@@ -759,10 +741,11 @@ func (ws *WebServer) addPrinterHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate address
-	if err := validateAddress(printerConfig.IPAddress); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if printerConfig.Driver != DriverBambuHA {
+		if err := validateAddress(printerConfig.IPAddress); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// Generate a unique printer ID using nanosecond timestamp + random component
@@ -873,8 +856,17 @@ func (ws *WebServer) deletePrinterHandler(c *gin.Context) {
 
 	printerID := c.Param("id")
 
-	// Delete the printer configuration
-	if err := ws.bridge.DeletePrinterConfig(printerID); err != nil {
+	printerConfigs, err := ws.bridge.GetAllPrinterConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if cfg, ok := printerConfigs[printerID]; ok && cfg.Driver == DriverBambuHA {
+		if err := ws.bridge.RemoveBambuPrinter(printerID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else if err := ws.bridge.DeletePrinterConfig(printerID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1224,12 +1216,26 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 	var isPrinterLocation bool
 
 	if locationStr != "" {
-		printerName, toolheadID, locationName, isPrinterLocation, err = ws.bridge.parseLocationParam(locationStr)
-		if err != nil {
-			c.HTML(http.StatusBadRequest, "nfc_error.html", gin.H{
-				"Error": err.Error(),
-			})
-			return
+		if IsBambuLocation(locationStr) {
+			tray, parseErr := ws.bridge.ParseBambuLocation(locationStr)
+			if parseErr != nil {
+				c.HTML(http.StatusBadRequest, "nfc_error.html", gin.H{"Error": parseErr.Error()})
+				return
+			}
+			if tray == nil {
+				c.HTML(http.StatusBadRequest, "nfc_error.html", gin.H{"Error": "Bambu tray not found for location"})
+				return
+			}
+			locationName = locationStr
+			isPrinterLocation = true
+		} else {
+			printerName, toolheadID, locationName, isPrinterLocation, err = ws.bridge.parseLocationParam(locationStr)
+			if err != nil {
+				c.HTML(http.StatusBadRequest, "nfc_error.html", gin.H{
+					"Error": err.Error(),
+				})
+				return
+			}
 		}
 	}
 
@@ -1244,8 +1250,19 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 
 	// Check if session is complete
 	if session.isSessionComplete() {
-		// Complete the assignment
-		err = ws.bridge.AssignSpoolToLocation(session.SpoolID, session.PrinterName, session.ToolheadID, session.LocationName, session.IsPrinterLocation)
+		var err error
+		if IsBambuLocation(session.LocationName) {
+			tray, trayErr := ws.bridge.ParseBambuLocation(session.LocationName)
+			if trayErr != nil || tray == nil {
+				c.HTML(http.StatusInternalServerError, "nfc_error.html", gin.H{
+					"Error": "Failed to resolve Bambu tray location",
+				})
+				return
+			}
+			err = ws.bridge.AssignSpoolToBambuTray(session.SpoolID, tray.UniqueID, session.LocationName)
+		} else {
+			err = ws.bridge.AssignSpoolToLocation(session.SpoolID, session.PrinterName, session.ToolheadID, session.LocationName, session.IsPrinterLocation)
+		}
 		if err != nil {
 			c.HTML(http.StatusInternalServerError, "nfc_error.html", gin.H{
 				"Error": "Assignment failed: " + err.Error(),
@@ -1504,6 +1521,13 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			"qr_code_base64": qrCodeBase64,
 			"is_local_only":  false, // All Spoolman locations are synced
 		})
+	}
+
+	// Bambu AMS slot NFC URLs
+	if bambuURLs, err := ws.bridge.GenerateBambuNFCURLs(c.Request.Host); err == nil {
+		for _, entry := range bambuURLs {
+			urls = append(urls, entry)
+		}
 	}
 
 	// Sort URLs: filaments first, then spools, then locations alphabetically by display name

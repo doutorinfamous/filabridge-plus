@@ -33,6 +33,7 @@ function switchTab(tabName) {
                     // Getting Started tab doesn't need data loading
                 } else if (tabId === 'basic-config') {
                     loadConfiguration();
+                    loadHASettings();
                 } else if (tabId === 'printers') {
                     loadPrinters();
                 } else if (tabId === 'advanced') {
@@ -85,6 +86,7 @@ function switchSettingsTab(tabName, clickedElement) {
         // Getting Started tab doesn't need data loading
     } else if (tabName === 'basic-config') {
         loadConfiguration();
+        loadHASettings();
     } else if (tabName === 'printers') {
         loadPrinters();
     } else if (tabName === 'advanced') {

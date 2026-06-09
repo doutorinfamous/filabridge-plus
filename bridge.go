@@ -221,6 +221,10 @@ func (b *FilamentBridge) initDatabase() error {
 		log.Printf("Warning: Failed to migrate legacy printer configuration: %v", err)
 	}
 
+	if err := b.migrateBambuSchema(); err != nil {
+		log.Printf("Warning: Failed to migrate Bambu schema: %v", err)
+	}
+
 	// Migrate existing FilaBridge locations to Spoolman
 	if err := b.migrateLocationsToSpoolman(); err != nil {
 		log.Printf("Warning: Failed to migrate locations to Spoolman: %v", err)
@@ -449,6 +453,9 @@ func getConfigDescription(key string) string {
 		ConfigKeySpoolmanTimeout:                 "Spoolman API timeout in seconds",
 		ConfigKeyAutoAssignPreviousSpoolEnabled:  "Enable automatic assignment of previous spool to default location when assigning new spool to toolhead",
 		ConfigKeyAutoAssignPreviousSpoolLocation: "Default location name where previous spools will be automatically assigned (must exist as a location)",
+		ConfigKeyHAURL:                         "Home Assistant URL (e.g. http://192.168.1.10:8123)",
+		ConfigKeyHAToken:                       "Home Assistant Long-Lived Access Token",
+		ConfigKeyFilabridgePublicURL:           "Public URL for FilaBridge webhooks (reachable from HA)",
 	}
 	if desc, exists := descriptions[key]; exists {
 		return desc
@@ -540,7 +547,7 @@ func (b *FilamentBridge) SetAutoAssignPreviousSpoolLocation(location string) err
 
 // GetAllPrinterConfigs gets all printer configurations
 func (b *FilamentBridge) GetAllPrinterConfigs() (map[string]PrinterConfig, error) {
-	rows, err := b.db.Query("SELECT printer_id, name, model, ip_address, api_key, toolheads FROM printer_configs")
+	rows, err := b.db.Query("SELECT printer_id, name, model, COALESCE(driver, 'moonraker'), ip_address, api_key, toolheads, COALESCE(ha_prefix, ''), COALESCE(ha_device_id, '') FROM printer_configs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get printer configs: %w", err)
 	}
@@ -548,17 +555,20 @@ func (b *FilamentBridge) GetAllPrinterConfigs() (map[string]PrinterConfig, error
 
 	configs := make(map[string]PrinterConfig)
 	for rows.Next() {
-		var printerID, name, model, ipAddress, apiKey string
+		var printerID, name, model, driver, ipAddress, apiKey, haPrefix, haDeviceID string
 		var toolheads int
-		if err := rows.Scan(&printerID, &name, &model, &ipAddress, &apiKey, &toolheads); err != nil {
+		if err := rows.Scan(&printerID, &name, &model, &driver, &ipAddress, &apiKey, &toolheads, &haPrefix, &haDeviceID); err != nil {
 			return nil, fmt.Errorf("failed to scan printer config row: %w", err)
 		}
 		configs[printerID] = PrinterConfig{
-			Name:      name,
-			Model:     model,
-			IPAddress: ipAddress,
-			APIKey:    apiKey,
-			Toolheads: toolheads,
+			Name:       name,
+			Model:      model,
+			Driver:     driver,
+			IPAddress:  ipAddress,
+			APIKey:     apiKey,
+			Toolheads:  toolheads,
+			HAPrefix:   haPrefix,
+			HADeviceID: haDeviceID,
 		}
 	}
 
@@ -570,10 +580,14 @@ func (b *FilamentBridge) SavePrinterConfig(printerID string, config PrinterConfi
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
+	driver := config.Driver
+	if driver == "" {
+		driver = DriverMoonraker
+	}
 	_, err := b.db.Exec(`
-		INSERT OR REPLACE INTO printer_configs (printer_id, name, model, ip_address, api_key, toolheads)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, printerID, config.Name, config.Model, config.IPAddress, config.APIKey, config.Toolheads)
+		INSERT OR REPLACE INTO printer_configs (printer_id, name, model, driver, ip_address, api_key, toolheads, ha_prefix, ha_device_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, printerID, config.Name, config.Model, driver, config.IPAddress, config.APIKey, config.Toolheads, config.HAPrefix, config.HADeviceID)
 	if err != nil {
 		return fmt.Errorf("failed to save printer config: %w", err)
 	}
@@ -848,27 +862,12 @@ func (b *FilamentBridge) SetToolheadMapping(printerName string, toolheadID int, 
 	}
 	// If no previous mapping exists, previousSpoolID will be 0
 
-	// Check if this spool is already assigned to a different toolhead
-	rows, err := b.db.Query(
-		"SELECT printer_name, toolhead_id FROM toolhead_mappings WHERE spool_id = ? AND NOT (printer_name = ? AND toolhead_id = ?)",
-		spoolID, printerName, toolheadID,
-	)
-	if err != nil {
+	if err := b.ensureSpoolNotAssignedElsewhere(spoolID, ExcludeAssignment{
+		PrinterName: printerName,
+		ToolheadID:  toolheadID,
+	}); err != nil {
 		b.mutex.Unlock()
-		return fmt.Errorf("failed to check existing spool assignments: %w", err)
-	}
-	defer rows.Close()
-
-	// If we find any rows, this spool is already assigned elsewhere
-	if rows.Next() {
-		var existingPrinterName string
-		var existingToolheadID int
-		if err := rows.Scan(&existingPrinterName, &existingToolheadID); err != nil {
-			b.mutex.Unlock()
-			return fmt.Errorf("failed to scan existing assignment: %w", err)
-		}
-		b.mutex.Unlock()
-		return fmt.Errorf("spool %d is already assigned to %s toolhead %d", spoolID, existingPrinterName, existingToolheadID)
+		return err
 	}
 
 	_, err = b.db.Exec(
@@ -921,6 +920,43 @@ func (b *FilamentBridge) SetToolheadMapping(printerName string, toolheadID int, 
 	}
 
 	return nil
+}
+
+// tryAutoAssignSpoolToDefaultStorage moves an unmapped spool to the configured storage location.
+func (b *FilamentBridge) tryAutoAssignSpoolToDefaultStorage(spoolID int) {
+	if spoolID <= 0 {
+		return
+	}
+
+	enabled, err := b.GetAutoAssignPreviousSpoolEnabled()
+	if err != nil {
+		log.Printf("Warning: Failed to check auto-assign previous spool setting: %v", err)
+		return
+	}
+	if !enabled {
+		return
+	}
+
+	locationName, err := b.GetAutoAssignPreviousSpoolLocation()
+	if err != nil {
+		log.Printf("Warning: Failed to get auto-assign previous spool location setting: %v", err)
+		return
+	}
+	if locationName == "" {
+		return
+	}
+
+	location, err := b.spoolman.FindLocationByName(locationName)
+	if err != nil || location == nil {
+		log.Printf("Warning: Auto-assign previous spool location '%s' does not exist, skipping auto-assignment of spool %d", locationName, spoolID)
+		return
+	}
+
+	if err := b.AssignSpoolToLocation(spoolID, "", 0, locationName, false); err != nil {
+		log.Printf("Warning: Failed to auto-assign unmapped spool %d to location '%s': %v", spoolID, locationName, err)
+		return
+	}
+	log.Printf("Auto-assigned unmapped spool %d to location '%s'", spoolID, locationName)
 }
 
 // GetToolheadMappings gets all toolhead mappings for a printer
@@ -1095,10 +1131,13 @@ func (b *FilamentBridge) MonitorPrinters() {
 		return
 	}
 
-	// Monitor each printer using Snapmaker U1 Moonraker
+	// Monitor Moonraker printers only — Bambu uses HA webhooks
 	for printerID, printerConfig := range configSnapshot.Printers {
 		if printerID == "no_printers" {
 			continue // Skip placeholder
+		}
+		if printerConfig.Driver == DriverBambuHA {
+			continue
 		}
 		go func(printerID string, config PrinterConfig) {
 			if err := b.monitorPrinter(printerID, config); err != nil {
@@ -1403,6 +1442,11 @@ func (b *FilamentBridge) GetStatus() (*PrinterStatus, error) {
 		for printerID, printerConfig := range configSnapshot.Printers {
 			if printerID == "no_printers" {
 				continue // Skip placeholder
+			}
+
+			if printerConfig.Driver == DriverBambuHA {
+				status.Printers[printerID] = b.buildBambuPrinterData(printerID, printerConfig)
+				continue
 			}
 
 			client := NewSnapmakerU1MoonrakerClient(printerConfig.IPAddress, printerConfig.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)

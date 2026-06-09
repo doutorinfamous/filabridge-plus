@@ -10,11 +10,14 @@ import (
 
 // PrinterConfig represents configuration for a single printer
 type PrinterConfig struct {
-	Name      string `json:"name"`
-	Model     string `json:"model"`
-	IPAddress string `json:"ip_address"`
-	APIKey    string `json:"api_key,omitempty"`
-	Toolheads int    `json:"toolheads"`
+	Name       string `json:"name"`
+	Model      string `json:"model"`
+	Driver     string `json:"driver,omitempty"`
+	IPAddress  string `json:"ip_address"`
+	APIKey     string `json:"api_key,omitempty"`
+	Toolheads  int    `json:"toolheads"`
+	HAPrefix   string `json:"ha_prefix,omitempty"`
+	HADeviceID string `json:"ha_device_id,omitempty"`
 }
 
 // FilamentSpool represents a filament spool from Spoolman
@@ -133,11 +136,14 @@ func LoadConfig(bridge *FilamentBridge) (*Config, error) {
 		// This prevents race conditions and timeouts during config loading
 		// Live printer status will be handled by the monitoring cycle
 		config.Printers[printerID] = PrinterConfig{
-			Name:      printerConfig.Name,
-			Model:     printerConfig.Model,
-			IPAddress: printerConfig.IPAddress,
-			APIKey:    printerConfig.APIKey,
-			Toolheads: printerConfig.Toolheads,
+			Name:       printerConfig.Name,
+			Model:      printerConfig.Model,
+			Driver:     printerConfig.Driver,
+			IPAddress:  printerConfig.IPAddress,
+			APIKey:     printerConfig.APIKey,
+			Toolheads:  printerConfig.Toolheads,
+			HAPrefix:   printerConfig.HAPrefix,
+			HADeviceID: printerConfig.HADeviceID,
 		}
 	}
 

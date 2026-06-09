@@ -23,6 +23,24 @@ function loadPrinters() {
                     const printerCard = document.createElement('div');
                     printerCard.className = 'printer-card';
                     
+                    const isBambu = printer.driver === 'bambu_ha';
+                    if (isBambu) {
+                        printerCard.innerHTML = `
+                            <h3>${printer.name || 'Unknown Printer'}</h3>
+                            <div class="printer-info">
+                                <div><strong>Model:</strong> ${printer.model || 'Bambu Lab (Home Assistant)'}</div>
+                                <div><strong>Source:</strong> Home Assistant (ha-bambulab)</div>
+                                <div><strong>HA Prefix:</strong> ${printer.ha_prefix || 'N/A'}</div>
+                            </div>
+                            <div class="printer-actions">
+                                <button class="btn btn-small" onclick="downloadHAConfig('${printerId}')">📄 HA Config</button>
+                                <button class="btn btn-small btn-danger" onclick="deletePrinter('${printerId}')">🗑️ Delete</button>
+                            </div>
+                        `;
+                        printerList.appendChild(printerCard);
+                        continue;
+                    }
+
                     // Build toolhead names section
                     let toolheadNamesHTML = '';
                     const toolheadNames = printer.toolhead_names || {};

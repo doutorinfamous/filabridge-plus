@@ -195,15 +195,43 @@ async function loadLocationTags() {
         messageBanner.innerHTML = bannerHTML;
         container.appendChild(messageBanner);
         
-        if (locationUrls.length === 0) {
-            const noLocationsMsg = document.createElement('p');
-            noLocationsMsg.textContent = 'No locations available. Create locations in Spoolman to see them here.';
-            noLocationsMsg.style.cssText = 'padding: 20px; text-align: center; color: #666;';
-            container.appendChild(noLocationsMsg);
-            return;
+        const amsSlots = locationUrls.filter(url => url.location_type === 'ams_slot');
+        const storageLocations = locationUrls.filter(url => url.location_type !== 'ams_slot');
+
+        if (amsSlots.length > 0) {
+            const amsHeader = document.createElement('h4');
+            amsHeader.textContent = 'AMS Slots (Bambu Lab)';
+            amsHeader.style.marginTop = '20px';
+            container.appendChild(amsHeader);
+            amsSlots.forEach(url => {
+                const item = document.createElement('div');
+                item.className = 'nfc-list-item';
+                item.dataset.value = url.display_name;
+                item.dataset.url = url.url;
+                item.dataset.qr = url.qr_code_base64;
+                item.innerHTML = `
+                    <div class="location-icon">🎞️</div>
+                    <div class="item-info">
+                        <div class="item-name">${url.display_name}</div>
+                        <div class="item-details">AMS slot · ${url.printer_name || ''}</div>
+                    </div>
+                `;
+                item.addEventListener('click', () => {
+                    container.querySelectorAll('.nfc-list-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+                    displayLocationQR({
+                        name: url.display_name,
+                        is_printer_location: true,
+                        url: url.url,
+                        qr_code_base64: url.qr_code_base64,
+                        description: 'Bambu AMS slot — scan after spool tag'
+                    });
+                });
+                container.appendChild(item);
+            });
         }
-        
-        locationUrls.forEach(url => {
+
+        storageLocations.forEach(url => {
             const item = document.createElement('div');
             item.className = 'nfc-list-item';
             item.dataset.value = url.display_name;
@@ -250,6 +278,13 @@ async function loadLocationTags() {
             
             container.appendChild(item);
         });
+
+        if (amsSlots.length === 0 && storageLocations.length === 0) {
+            const noLocationsMsg = document.createElement('p');
+            noLocationsMsg.textContent = 'No locations available. Create locations in Spoolman or register a Bambu printer.';
+            noLocationsMsg.style.cssText = 'padding: 20px; text-align: center; color: #666;';
+            container.appendChild(noLocationsMsg);
+        }
         
         // Initialize search functionality
         initializeLocationSearch(locationUrls);

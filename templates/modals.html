@@ -94,6 +94,23 @@
     </div>
 </div>
 
+<!-- Add Bambu Printer Modal -->
+<div id="addBambuPrinterModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Bambu Lab Printer (Home Assistant)</h3>
+            <button class="close" onclick="closeAddBambuPrinterModal()">&times;</button>
+        </div>
+        <p class="help-text">Discovered printers from Home Assistant (ha-bambulab). Configure HA URL and token in Basic Configuration first.</p>
+        <div id="bambu-discover-list" style="margin: 20px 0;">
+            <p>Loading...</p>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" onclick="closeAddBambuPrinterModal()">Close</button>
+        </div>
+    </div>
+</div>
+
 <!-- NFC QR Code Modal -->
 <div id="nfcQrModal" class="nfc-qr-modal">
     <div class="nfc-qr-content">

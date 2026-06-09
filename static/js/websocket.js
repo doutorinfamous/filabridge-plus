@@ -205,82 +205,32 @@ function updatePrinterStatuses(printers) {
     });
 }
 
-function updateSpoolData(spools) {
-    // Update spool dropdowns with new weight data
-    document.querySelectorAll('.custom-dropdown').forEach(dropdown => {
-        const optionsContainer = dropdown.querySelector('.dropdown-options-container');
-        if (!optionsContainer) return;
-        
-        // Clear existing options except "Empty"
-        const selectOption = optionsContainer.querySelector('.dropdown-option[data-value=""]');
-        optionsContainer.innerHTML = '';
-        if (selectOption) {
-            optionsContainer.appendChild(selectOption);
-        }
-        
-        // Add updated spool options
-        spools.forEach(spool => {
-            const option = document.createElement('div');
-            option.className = 'dropdown-option';
-            option.setAttribute('data-value', spool.id);
-            option.setAttribute('data-color', spool.filament?.color_hex || '');
-            
-            const colorSwatch = document.createElement('div');
-            colorSwatch.className = 'color-swatch';
-            colorSwatch.style.backgroundColor = '#' + (spool.filament?.color_hex || 'ccc');
-            
-            const optionText = document.createElement('div');
-            optionText.className = 'option-text';
-            optionText.textContent = `[${spool.id}] ${spool.material || 'Unknown Material'} - ${spool.brand || 'Unknown Brand'} - ${spool.name || 'Unnamed Spool'}${spool.remaining_weight != null ? ` (${Math.round(spool.remaining_weight)}g remaining)` : ''}`;
-            
-            option.appendChild(colorSwatch);
-            option.appendChild(optionText);
-            optionsContainer.appendChild(option);
-        });
-        
-        // Add event listeners to the new options
-        optionsContainer.querySelectorAll('.dropdown-option').forEach(option => {
-            option.addEventListener('click', async function(e) {
-                e.stopPropagation();
-                
-                // Update button text and selected state
-                const selectedText = option.querySelector('.option-text').textContent;
-                const selectedColor = option.dataset.color;
-                const selectedValue = option.dataset.value;
-                
-                // Update hidden input value
-                const hiddenInput = dropdown.querySelector('input[type="hidden"]');
-                if (hiddenInput) {
-                    hiddenInput.value = selectedValue;
-                }
-                
-                // Update selected state
-                optionsContainer.querySelectorAll('.dropdown-option').forEach(opt => opt.classList.remove('selected'));
-                option.classList.add('selected');
-                
-                // Close dropdown
-                const content = dropdown.querySelector('.dropdown-content');
-                const button = dropdown.querySelector('.dropdown-button');
-                const arrow = dropdown.querySelector('.dropdown-arrow');
-                content.classList.remove('show');
-                button.classList.remove('open');
-                arrow.classList.remove('open');
-                
-                // Auto-map the spool if a spool is selected (not "Empty")
-                if (selectedValue && selectedValue !== '') {
-                    await autoMapSpool(dropdown, selectedValue, selectedText, selectedColor);
-                } else {
-                    // Handle empty selection - unmap the toolhead
-                    await autoMapSpool(dropdown, '0', selectedText, '');
-                }
-                
-                // Update edit button after selection
-                const toolheadRow = dropdown.closest('.toolhead-mapping-row');
-                if (toolheadRow) {
-                    updateEditButton(toolheadRow, selectedValue, selectedColor);
-                }
-            });
-        });
+async function updateSpoolData(spools) {
+    // Refresh Moonraker dropdown options only (Bambu trays are managed separately)
+    if (typeof refreshAllDropdowns === 'function') {
+        await refreshAllDropdowns();
+    }
+
+    // Update visible button labels with latest spool weights for currently selected spools
+    document.querySelectorAll('.toolhead-mapping-row:not(.bambu-tray-mapping-row) .custom-dropdown, .bambu-tray-mapping-row .custom-dropdown').forEach(dropdown => {
+        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+        if (!hiddenInput || !hiddenInput.value) return;
+
+        const spool = spools.find(s => String(s.id) === String(hiddenInput.value));
+        if (!spool) return;
+
+        const color = (spool.filament && spool.filament.color_hex) ? spool.filament.color_hex.replace('#', '') : 'ccc';
+        const label = `[${spool.id}] ${spool.material || 'Unknown Material'} - ${spool.brand || 'Unknown Brand'} - ${spool.name || 'Unnamed Spool'}${spool.remaining_weight != null ? ` (${Math.round(spool.remaining_weight)}g remaining)` : ''}`;
+        const button = dropdown.querySelector('.dropdown-button');
+        if (!button) return;
+
+        button.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div class="color-swatch" style="background-color: #${color};"></div>
+                <span>${label}</span>
+            </div>
+            <span class="dropdown-arrow">▼</span>
+        `;
     });
 }
 
@@ -296,8 +246,12 @@ function updateToolheadMappings(mappings) {
         });
     });
     
-    // Process all toolhead rows
+    // Process all toolhead rows (skip Bambu AMS trays — they use active_tray, not toolhead_mappings)
     allToolheadRows.forEach(toolheadRow => {
+        if (toolheadRow.classList.contains('bambu-tray-mapping-row')) {
+            return;
+        }
+
         const printerId = toolheadRow.getAttribute('data-printer-id');
         const toolheadId = toolheadRow.getAttribute('data-toolhead-id');
         const key = `${printerId}-${toolheadId}`;

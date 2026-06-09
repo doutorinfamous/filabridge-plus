@@ -21,11 +21,28 @@ func (b *FilamentBridge) ProcessBambuWebhook(payload BambuWebhookPayload, ha *HA
 
 	switch payload.Event {
 	case "spool_usage":
-		return b.processSpoolUsage(payload, ha, idMap)
+		result := b.processSpoolUsage(payload, ha, idMap)
+		logBambuWebhookResult("spool_usage", payload.ActiveTrayID, result)
+		return result
 	case "tray_change":
-		return b.processTrayChange(payload, ha, idMap)
+		result := b.processTrayChange(payload, ha, idMap)
+		logBambuWebhookResult("tray_change", payload.TrayEntityID, result)
+		return result
 	default:
 		return BambuWebhookResult{Status: "ignored", Reason: "unknown event"}
+	}
+}
+
+func logBambuWebhookResult(event, trayID string, result BambuWebhookResult) {
+	switch result.Status {
+	case "success":
+		log.Printf("Webhook %s (%s): success spool=#%d action=%s deducted=%.2fg", event, trayID, result.SpoolID, result.Action, result.Deducted)
+	case "no_match":
+		log.Printf("Webhook %s (%s): no spool assigned — assign bobina no FilaBridge primeiro", event, trayID)
+	case "ignored":
+		log.Printf("Webhook %s (%s): ignored — %s", event, trayID, result.Reason)
+	default:
+		log.Printf("Webhook %s (%s): %s — %s", event, trayID, result.Status, result.Message)
 	}
 }
 
@@ -80,7 +97,6 @@ func (b *FilamentBridge) processSpoolUsage(payload BambuWebhookPayload, ha *HACl
 		}
 	}
 
-	log.Printf("Deducted %.2fg from spool #%d (tray %s)", weight, spool.ID, payload.ActiveTrayID)
 	return BambuWebhookResult{
 		Status:    "success",
 		SpoolID:   spool.ID,
@@ -113,7 +129,6 @@ func (b *FilamentBridge) processTrayChange(payload BambuWebhookPayload, ha *HACl
 		if err := b.UnassignBambuTray(trayUniqueID); err != nil {
 			return BambuWebhookResult{Status: "error", Message: err.Error()}
 		}
-		log.Printf("Auto-unassigned spool #%d from empty tray %s", spool.ID, payload.TrayEntityID)
 		return BambuWebhookResult{Status: "success", Action: "unassigned", SpoolID: spool.ID, Reason: "tray_empty"}
 	}
 
@@ -133,6 +148,5 @@ func (b *FilamentBridge) processTrayChange(payload BambuWebhookPayload, ha *HACl
 		return BambuWebhookResult{Status: "error", Message: err.Error()}
 	}
 
-	log.Printf("Auto-assigned spool #%d to tray %s via RFID %s", spool.ID, payload.TrayEntityID, payload.TrayUUID)
 	return BambuWebhookResult{Status: "success", Action: "assigned", SpoolID: spool.ID}
 }

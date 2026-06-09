@@ -76,6 +76,16 @@ func uniqueAMSNumbers(trays []BambuTrayInfo) []int {
 	return nums
 }
 
+func buildFilamentUsageTemplate(printWeightEntity, printProgressEntity string) string {
+	if printWeightEntity == "" || printProgressEntity == "" {
+		return "0"
+	}
+	return fmt.Sprintf(
+		"{%% set w = states('%s') | float(0) %%}\n{%% set p = states('%s') | float(0) %%}\n{%% set pct = (p / 100.0) if p > 1 else p %%}\n{{ (w * pct) | round(3) }}",
+		printWeightEntity, printProgressEntity,
+	)
+}
+
 func generateBambuConfigurationYAML(prefix string, allTrays []BambuTrayInfo, printer BambuPrinter, webhookURL string) string {
 	maxComposite := 99
 	for _, t := range allTrays {
@@ -141,10 +151,10 @@ template:
       - name: "FilaBridge %s Filament Usage"
         unique_id: filabridge-%s-filament-usage
         state: >
-          {{ states('%s') | float(0) / 100 *
-             states('%s') | float(0) }}
+          %s
         availability: >
-          {{ states('%s') not in ['unknown', 'unavailable'] }}
+          {{ states('%s') not in ['unknown', 'unavailable']
+             and states('%s') not in ['unknown', 'unavailable'] }}
 
       - name: "FilaBridge %s Active Tray"
         unique_id: filabridge-%s-active-tray
@@ -159,7 +169,9 @@ template:
 		filabridgeEntityPrefix, prefix, prefix, filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix, webhookURL,
 		filabridgeEntityPrefix, webhookURL,
-		prefix, prefix, printer.PrintWeightEntity, printer.PrintProgressEntity, printer.PrintWeightEntity,
+		prefix, prefix,
+		buildFilamentUsageTemplate(printer.PrintWeightEntity, printer.PrintProgressEntity),
+		printer.PrintWeightEntity, printer.PrintProgressEntity,
 		prefix, prefix, activeTrayDetection,
 		strings.Join(availabilityEntities, ",\n            "),
 	)
@@ -175,9 +187,9 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
 		trayEntityIDs.WriteString(fmt.Sprintf("        - %s", t.EntityID))
 	}
 
-	stageEntity := printer.CurrentStageEntity
-	if stageEntity == "" {
-		stageEntity = printer.EntityID
+	printEndEntity := printer.EntityID
+	if printEndEntity == "" {
+		printEndEntity = printer.CurrentStageEntity
 	}
 
 	return fmt.Sprintf(`automation:
@@ -190,7 +202,7 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
         trigger: state
       - entity_id: %s
         to:
-          - finished
+          - finish
           - idle
         id: print_end
         trigger: state
@@ -250,7 +262,10 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
                   value: "{{ new_tray }}"
           - conditions:
               - condition: template
-                value_template: "{{ trigger.id == 'print_end' }}"
+                value_template: >-
+                  {{ trigger.id == 'print_end'
+                     and trigger.from_state is not none
+                     and trigger.from_state.state not in ['unavailable', 'unknown', 'idle', 'finish'] }}
             sequence:
               - choose:
                   - conditions:
@@ -314,7 +329,7 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
 `,
 		prefix, prefix,
 		filabridgeEntityPrefix, prefix,
-		stageEntity,
+		printEndEntity,
 		filabridgeEntityPrefix, prefix,
 		trayEntityLookup,
 		filabridgeEntityPrefix, prefix,

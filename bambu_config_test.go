@@ -54,3 +54,38 @@ func TestGenerateBambuAutomationsTrayChangeAttributeTriggers(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildFilamentUsageTemplateProgressScale(t *testing.T) {
+	got := buildFilamentUsageTemplate("sensor.test_print_weight", "sensor.test_print_progress")
+	for _, want := range []string{
+		"sensor.test_print_weight",
+		"sensor.test_print_progress",
+		"if p > 1 else p",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("filament usage template missing %q.\ngot: %s", want, got)
+		}
+	}
+	if got == "0" {
+		t.Error("expected template when entities provided")
+	}
+}
+
+func TestGenerateBambuAutomationsPrintEndUsesPrintStatus(t *testing.T) {
+	printer := BambuPrinter{
+		Prefix:              "03919c461204338",
+		EntityID:            "sensor.bambu_print_status",
+		PrintWeightEntity:   "sensor.bambu_print_weight",
+		PrintProgressEntity: "sensor.bambu_print_progress",
+	}
+	yaml := generateBambuAutomationsYAML(printer.Prefix, nil, "http://filabridge:5000/api/webhook", printer)
+	for _, want := range []string{
+		"entity_id: sensor.bambu_print_status",
+		"- finish",
+		"from_state.state not in ['unavailable', 'unknown', 'idle', 'finish']",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("generated automations missing %q", want)
+		}
+	}
+}

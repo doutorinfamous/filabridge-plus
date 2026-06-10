@@ -25,3 +25,14 @@ func TestLengthToWeight(t *testing.T) {
 		t.Errorf("expected positive weight, got %f", w)
 	}
 }
+
+func TestActiveTrayMatchesUniqueIDVariants(t *testing.T) {
+	stored := `"A1_03919C461204338_AMS_03C12A3C0425658_tray_3"`
+	parsed := "A1_03919C461204338_AMS_03C12A3C0425658_tray_3"
+	if !activeTrayMatches(stored, parsed, "sensor.bambu_lab_a1_ams_tray_3", "A1_03919C461204338_AMS_03C12A3C0425658_tray_3") {
+		t.Fatal("expected match for entity_id and unique_id")
+	}
+	if !activeTrayMatches(stored, parsed, "sensor.A1_03919C461204338_AMS_03C12A3C0425658_tray_3") {
+		t.Fatal("expected match for sensor.{unique_id} shorthand")
+	}
+}

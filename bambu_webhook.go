@@ -46,6 +46,29 @@ func logBambuWebhookResult(event, trayID string, result BambuWebhookResult) {
 	}
 }
 
+// resolveBambuTrayUniqueID maps a HA entity_id (or unique_id) to the tray unique_id stored in Spoolman.
+func (b *FilamentBridge) resolveBambuTrayUniqueID(trayRef string, ha *HAClient, idMap map[string]string) string {
+	if trayRef == "" {
+		return ""
+	}
+	if ha != nil {
+		if uid := ha.ResolveToUniqueID(trayRef, idMap); uid != trayRef {
+			return uid
+		}
+	}
+	if tray, err := b.FindBambuTrayByEntityID(trayRef); err == nil && tray != nil {
+		return tray.UniqueID
+	}
+	candidate := trayRef
+	if strings.HasPrefix(candidate, "sensor.") {
+		candidate = strings.TrimPrefix(candidate, "sensor.")
+	}
+	if tray, err := b.FindBambuTrayByUniqueID(candidate); err == nil && tray != nil {
+		return tray.UniqueID
+	}
+	return candidate
+}
+
 func (b *FilamentBridge) processSpoolUsage(payload BambuWebhookPayload, ha *HAClient, idMap map[string]string) BambuWebhookResult {
 	weight := payload.UsedWeight
 	lengthConverted := false
@@ -60,10 +83,7 @@ func (b *FilamentBridge) processSpoolUsage(payload BambuWebhookPayload, ha *HACl
 		return BambuWebhookResult{Status: "ignored", Reason: "no active_tray_id provided"}
 	}
 
-	trayUniqueID := payload.ActiveTrayID
-	if ha != nil {
-		trayUniqueID = ha.ResolveToUniqueID(payload.ActiveTrayID, idMap)
-	}
+	trayUniqueID := b.resolveBambuTrayUniqueID(payload.ActiveTrayID, ha, idMap)
 
 	spool, err := b.spoolman.FindSpoolByActiveTray(payload.ActiveTrayID, trayUniqueID)
 	if err != nil {
@@ -110,10 +130,7 @@ func (b *FilamentBridge) processTrayChange(payload BambuWebhookPayload, ha *HACl
 		return BambuWebhookResult{Status: "ignored", Reason: "no tray_entity_id"}
 	}
 
-	trayUniqueID := payload.TrayEntityID
-	if ha != nil {
-		trayUniqueID = ha.ResolveToUniqueID(payload.TrayEntityID, idMap)
-	}
+	trayUniqueID := b.resolveBambuTrayUniqueID(payload.TrayEntityID, ha, idMap)
 
 	name := strings.TrimSpace(payload.Name)
 	trayEmpty := name == "" || strings.EqualFold(name, "empty") || name == "unavailable"

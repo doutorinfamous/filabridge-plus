@@ -180,15 +180,16 @@ func (c *SpoolmanClient) FindSpoolByActiveTray(trayID string, trayUniqueID strin
 	if err != nil {
 		return nil, err
 	}
-	jsonUnique := JSONStringifyExtraValue(trayUniqueID)
-	jsonEntity := JSONStringifyExtraValue(trayID)
 	for i := range spools {
+		if spools[i].Extra == nil {
+			continue
+		}
 		raw, ok := spools[i].Extra[spoolExtraFieldActiveTray]
 		if !ok {
 			continue
 		}
-		s, _ := raw.(string)
-		if s == jsonUnique || s == jsonEntity || GetSpoolExtraString(&spools[i], spoolExtraFieldActiveTray) == trayUniqueID || GetSpoolExtraString(&spools[i], spoolExtraFieldActiveTray) == trayID {
+		stored := GetSpoolExtraString(&spools[i], spoolExtraFieldActiveTray)
+		if activeTrayMatches(raw, stored, trayID, trayUniqueID) {
 			return &spools[i], nil
 		}
 	}

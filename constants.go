@@ -15,8 +15,9 @@ const (
 	MoonrakerStatePrinting = "printing"
 	MoonrakerStatePaused   = "paused"
 	MoonrakerStateComplete = "complete"
-	MoonrakerStateStandby  = "standby"
-	MoonrakerStateError    = "error"
+	MoonrakerStateStandby   = "standby"
+	MoonrakerStateError     = "error"
+	MoonrakerStateCancelled = "cancelled"
 )
 
 // Default configuration values

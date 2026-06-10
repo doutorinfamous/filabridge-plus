@@ -7,11 +7,12 @@ import (
 
 func TestNormalizeMoonrakerState(t *testing.T) {
 	tests := map[string]string{
-		"printing": StatePrinting,
-		"paused":   StatePrinting,
-		"complete": StateFinished,
-		"standby":  StateIdle,
-		"error":    StateError,
+		"printing":  StatePrinting,
+		"paused":    StatePrinting,
+		"complete":  StateFinished,
+		"cancelled": StateFinished,
+		"standby":   StateIdle,
+		"error":     StateError,
 	}
 
 	for input, expected := range tests {
@@ -80,6 +81,15 @@ func TestIsMoonrakerPrintingState(t *testing.T) {
 	}
 	if isMoonrakerFinishedState("printing") {
 		t.Fatal("printing should not be finished")
+	}
+}
+
+func TestIsMoonrakerCancelledState(t *testing.T) {
+	if !isMoonrakerCancelledState("cancelled") {
+		t.Fatal("cancelled should be detected")
+	}
+	if isMoonrakerCancelledState("complete") {
+		t.Fatal("complete should not be cancelled")
 	}
 }
 

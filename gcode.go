@@ -377,3 +377,47 @@ func logFilamentUsageResolution(filename, source string, usage map[int]float64) 
 	}
 	log.Printf("Resolved filament usage for %s (source=%s): %v", filename, source, usage)
 }
+
+func distributeFilamentProportionally(actualTotalG float64, gcodeUsage map[int]float64) map[int]float64 {
+	var gcodeTotal float64
+	for _, weight := range gcodeUsage {
+		gcodeTotal += weight
+	}
+	if gcodeTotal <= 0 {
+		return map[int]float64{0: actualTotalG}
+	}
+
+	result := make(map[int]float64, len(gcodeUsage))
+	for extruder, weight := range gcodeUsage {
+		result[extruder] = actualTotalG * (weight / gcodeTotal)
+	}
+	return result
+}
+
+func scaleFilamentUsage(usage map[int]float64, factor float64) map[int]float64 {
+	result := make(map[int]float64, len(usage))
+	for extruder, weight := range usage {
+		if weight > 0 {
+			result[extruder] = weight * factor
+		}
+	}
+	return result
+}
+
+func clampUnitInterval(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func sumFilamentUsage(usage map[int]float64) float64 {
+	var total float64
+	for _, weight := range usage {
+		total += weight
+	}
+	return total
+}

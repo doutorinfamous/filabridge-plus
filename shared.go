@@ -66,6 +66,45 @@ func JSONStringifyExtraValue(value string) string {
 	return string(b)
 }
 
+// trayRefVariants returns entity_id / unique_id forms used for active_tray matching.
+func trayRefVariants(refs ...string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	var add func(string)
+	add = func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+		if strings.HasPrefix(s, "sensor.") {
+			add(strings.TrimPrefix(s, "sensor."))
+		}
+	}
+	for _, ref := range refs {
+		add(ref)
+	}
+	return out
+}
+
+// activeTrayMatches reports whether a Spoolman active_tray value matches tray references.
+func activeTrayMatches(storedRaw interface{}, storedParsed string, refs ...string) bool {
+	if storedParsed == "" && storedRaw == nil {
+		return false
+	}
+	variants := trayRefVariants(refs...)
+	for _, variant := range variants {
+		if storedParsed == variant {
+			return true
+		}
+		if s, ok := storedRaw.(string); ok && s == JSONStringifyExtraValue(variant) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetSpoolExtraString returns a string extra field from a spool.
 func GetSpoolExtraString(spool *SpoolmanSpool, key string) string {
 	if spool == nil || spool.Extra == nil {

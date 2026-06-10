@@ -1120,6 +1120,14 @@ func shouldProcessCompletedJob(rawState, filename string, printDuration float64,
 		!alreadyProcessed
 }
 
+// shouldProcessCancelledJob detects cancelled prints that need partial filament debit.
+func shouldProcessCancelledJob(rawState, filename string, printDuration float64, alreadyProcessed bool) bool {
+	return isMoonrakerCancelledState(rawState) &&
+		filename != "" &&
+		printDuration > 0 &&
+		!alreadyProcessed
+}
+
 // MonitorPrinters monitors all printers for print status changes
 func (b *FilamentBridge) MonitorPrinters() {
 	log.Printf("Monitoring printers at %s", time.Now().Format(time.RFC3339))
@@ -1169,26 +1177,28 @@ func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) 
 	storedJobFile := b.currentJobFile[printerID]
 	b.mutex.RUnlock()
 
+	filenameToUse := storedJobFile
+	if filenameToUse == "" {
+		filenameToUse = currentJobFilename
+	}
+
 	alreadyProcessed := false
-	if currentJobFilename != "" {
-		alreadyProcessed, err = b.IsJobProcessed(printerID, currentJobFilename)
+	if filenameToUse != "" {
+		alreadyProcessed, err = b.IsJobProcessed(printerID, filenameToUse)
 		if err != nil {
 			log.Printf("Warning: Failed to check processed job for %s (%s): %v", config.IPAddress, printerID, err)
 		}
 	}
 
-	missedCompletion := shouldProcessCompletedJob(rawState, currentJobFilename, printerStatus.PrintDuration, alreadyProcessed)
+	missedCompletion := shouldProcessCompletedJob(rawState, filenameToUse, printerStatus.PrintDuration, alreadyProcessed)
 	transitionFinish := wasPrinting && isMoonrakerFinishedState(rawState) && rawState != MoonrakerStateError
+	cancelledJob := shouldProcessCancelledJob(rawState, filenameToUse, printerStatus.PrintDuration, alreadyProcessed)
 
 	// Debug logging for all printers
 	log.Printf("Printer %s (%s): state=%s, raw_state=%s, wasPrinting=%v, job=%s, stored_file=%s, print_duration=%.1f, alreadyProcessed=%v",
 		config.IPAddress, printerID, currentState, rawState, wasPrinting, jobName, storedJobFile, printerStatus.PrintDuration, alreadyProcessed)
 
 	if transitionFinish || missedCompletion {
-		filenameToUse := storedJobFile
-		if filenameToUse == "" {
-			filenameToUse = currentJobFilename
-		}
 		if filenameToUse == "" {
 			log.Printf("Warning: Print completion detected for %s (%s) but no filename available", config.IPAddress, printerID)
 		} else {
@@ -1220,6 +1230,30 @@ func (b *FilamentBridge) monitorPrinter(printerID string, config PrinterConfig) 
 			if err != nil {
 				log.Printf("Error handling print finished: %v", err)
 			}
+		}
+	} else if cancelledJob {
+		log.Printf("Print cancelled detected for %s (%s): %s (state: %s, file: %s)",
+			config.IPAddress, printerID, jobName, currentState, filenameToUse)
+
+		b.mutex.Lock()
+		b.wasPrinting[printerID] = false
+		b.processingPrints[printerID] = true
+		b.mutex.Unlock()
+
+		err := b.handlePrintCancelled(printerID, config, filenameToUse, printerStatus)
+
+		b.mutex.Lock()
+		b.processingPrints[printerID] = false
+		if err == nil {
+			b.currentJobFile[printerID] = ""
+			if markErr := b.MarkJobProcessed(printerID, filenameToUse); markErr != nil {
+				log.Printf("Warning: Failed to mark cancelled job as processed for %s (%s): %v", config.IPAddress, printerID, markErr)
+			}
+		}
+		b.mutex.Unlock()
+
+		if err != nil {
+			log.Printf("Error handling print cancelled: %v", err)
 		}
 	} else {
 		// Update state tracking - minimize lock scope
@@ -1326,6 +1360,114 @@ func (b *FilamentBridge) handlePrintFinished(printerID string, config PrinterCon
 	b.mutex.Unlock()
 
 	return nil
+}
+
+type partialFilamentResolution struct {
+	Usage  map[int]float64
+	Source string
+}
+
+// handlePrintCancelled debits partial filament usage when a print is cancelled.
+func (b *FilamentBridge) handlePrintCancelled(printerID string, config PrinterConfig, filename string, printerStatus *MoonrakerPrinterStatus) error {
+	log.Printf("Print cancelled via Moonraker (%s): %s", config.IPAddress, filename)
+
+	printerName := resolvePrinterName(config)
+	if filename == "" {
+		errorMsg := "no filename available for cancelled print processing"
+		b.addPrintError(printerName, "unknown", errorMsg)
+		return fmt.Errorf("%s", errorMsg)
+	}
+
+	client := NewSnapmakerU1MoonrakerClient(config.IPAddress, config.APIKey, b.config.PrinterTimeout, b.config.PrinterFileDownloadTimeout)
+	resolution, err := b.resolvePartialFilamentUsage(client, printerName, filename, printerStatus, b.config.PrinterFileDownloadTimeout)
+	if err != nil {
+		errorMsg := fmt.Sprintf("failed to resolve partial filament usage: %v", err)
+		b.addPrintError(printerName, filename, errorMsg)
+		return fmt.Errorf("%s", errorMsg)
+	}
+
+	totalG := sumFilamentUsage(resolution.Usage)
+	log.Printf("Print cancelled — debited %.2fg (source: %s) for %s: %+v", totalG, resolution.Source, filename, resolution.Usage)
+
+	if err := b.processFilamentUsage(printerName, resolution.Usage, filename); err != nil {
+		log.Printf("Error processing cancelled print filament usage: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+func (b *FilamentBridge) resolvePartialFilamentUsage(
+	client *SnapmakerU1MoonrakerClient,
+	printerName string,
+	filename string,
+	printerStatus *MoonrakerPrinterStatus,
+	fileDownloadTimeout int,
+) (partialFilamentResolution, error) {
+	if printerStatus != nil && printerStatus.FilamentUsed > 0 {
+		actualG := b.filamentUsageFromPrintStats(printerName, printerStatus.FilamentUsed)
+		if actualG > 0 {
+			usage, err := b.resolvePartialUsageFromPrintStats(client, filename, actualG, fileDownloadTimeout)
+			if err == nil && len(usage) > 0 {
+				return partialFilamentResolution{Usage: usage, Source: "print_stats"}, nil
+			}
+		}
+	}
+
+	gcodeUsage, err := client.ParseFilamentUsageFromFile(filename, fileDownloadTimeout)
+	if err != nil {
+		return partialFilamentResolution{}, fmt.Errorf("failed to parse G-code for filament usage: %w", err)
+	}
+	if len(gcodeUsage) == 0 {
+		return partialFilamentResolution{}, fmt.Errorf("no filament usage data found in G-code file")
+	}
+
+	if printerStatus != nil && printerStatus.Progress > 0 {
+		factor := clampUnitInterval(printerStatus.Progress)
+		return partialFilamentResolution{
+			Usage:  scaleFilamentUsage(gcodeUsage, factor),
+			Source: "progress",
+		}, nil
+	}
+
+	if printerStatus != nil && printerStatus.PrintDuration > 0 {
+		if meta, metaErr := client.GetFileMetadata(filename); metaErr == nil && meta != nil && meta.EstimatedTime > 0 {
+			factor := clampUnitInterval(printerStatus.PrintDuration / meta.EstimatedTime)
+			if factor > 0 {
+				return partialFilamentResolution{
+					Usage:  scaleFilamentUsage(gcodeUsage, factor),
+					Source: "duration",
+				}, nil
+			}
+		}
+	}
+
+	return partialFilamentResolution{}, fmt.Errorf("no partial filament usage data available")
+}
+
+func (b *FilamentBridge) resolvePartialUsageFromPrintStats(
+	client *SnapmakerU1MoonrakerClient,
+	filename string,
+	actualG float64,
+	fileDownloadTimeout int,
+) (map[int]float64, error) {
+	gcodeUsage, err := client.ParseFilamentUsageFromFile(filename, fileDownloadTimeout)
+	if err == nil && len(gcodeUsage) > 0 {
+		usage := distributeFilamentProportionally(actualG, gcodeUsage)
+		return applySnapmakerExtruderRemap(client, usage), nil
+	}
+
+	logical := map[int]float64{0: actualG}
+	return applySnapmakerExtruderRemap(client, logical), nil
+}
+
+func applySnapmakerExtruderRemap(client *SnapmakerU1MoonrakerClient, usage map[int]float64) map[int]float64 {
+	meta := &FilamentUsageMetadata{}
+	applySnapmakerExtruderMapping(meta, client.GetPrintTaskFilamentMapping())
+	if remapped, _, ok := remapSnapmakerExtruderUsage(usage, meta); ok {
+		return remapped
+	}
+	return usage
 }
 
 // filamentUsageFromPrintStats converts Moonraker print_stats.filament_used (mm) to grams.

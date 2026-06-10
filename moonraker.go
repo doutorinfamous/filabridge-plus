@@ -547,7 +547,7 @@ func normalizeMoonrakerState(state string) string {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case MoonrakerStatePrinting, MoonrakerStatePaused:
 		return StatePrinting
-	case MoonrakerStateComplete:
+	case MoonrakerStateComplete, MoonrakerStateCancelled:
 		return StateFinished
 	case MoonrakerStateStandby:
 		return StateIdle
@@ -574,6 +574,10 @@ func isMoonrakerFinishedState(rawState string) bool {
 	default:
 		return false
 	}
+}
+
+func isMoonrakerCancelledState(rawState string) bool {
+	return strings.ToLower(strings.TrimSpace(rawState)) == MoonrakerStateCancelled
 }
 
 func displayNameFromFilename(filename string) string {

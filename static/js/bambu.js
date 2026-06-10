@@ -522,20 +522,60 @@ async function loadBambuPrintersStatus(forceRebuild = false) {
     }
 }
 
+function formatHAInstallChecklist(filename) {
+    return [
+        'YAML baixado. Próximos passos no Home Assistant:',
+        '',
+        '1. Salve em config/packages/' + filename + ' (nome em minúsculas)',
+        '2. O arquivo deve conter: input_number, utility_meter, rest_command, template e automation',
+        '3. Reinicie o Home Assistant por completo',
+        '4. Após reinício, clique "Validar HA" no FilaBridge e confirme 4 entidades',
+        '',
+        'Se faltar filament_usage_meter, a automação reporta utility_meter.calibrate como ação desconhecida.',
+    ].join('\n');
+}
+
 async function downloadHAConfig(printerId) {
     try {
         const res = await fetch(`/api/ha/automations/${printerId}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to generate config');
+        const filename = data.filename || 'filabridge_ha.yaml';
         const blob = new Blob([data.yaml], { type: 'text/yaml' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = data.filename || 'filabridge_ha.yaml';
+        a.download = filename;
         a.click();
         URL.revokeObjectURL(a.href);
-        alert('YAML downloaded. Copy to HA config/packages/ and restart Home Assistant.\nWebhook URL: ' + data.webhook_url);
+        alert(formatHAInstallChecklist(filename) + '\n\nWebhook URL: ' + data.webhook_url);
     } catch (e) {
         alert('Error: ' + e.message);
+    }
+}
+
+async function validateHASetup(printerId) {
+    try {
+        const res = await fetch(`/api/ha/validate/${printerId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Validation failed');
+
+        const lines = [
+            data.all_ok ? 'Home Assistant: configuração OK' : 'Home Assistant: entidades faltando',
+            'Package: config/packages/' + (data.package_file || 'filabridge_<prefix>.yaml'),
+            '',
+        ];
+        for (const check of data.checks || []) {
+            const status = check.found ? ('OK (' + (check.state || '—') + ')') : 'AUSENTE';
+            lines.push((check.found ? '✓' : '✗') + ' ' + check.entity_id + ' — ' + status);
+            if (!check.found && check.hint) lines.push('  ' + check.hint);
+        }
+        if (data.fix_steps && data.fix_steps.length) {
+            lines.push('', 'Como corrigir:');
+            data.fix_steps.forEach((step, i) => lines.push((i + 1) + '. ' + step));
+        }
+        alert(lines.join('\n'));
+    } catch (e) {
+        alert('Erro ao validar HA: ' + e.message);
     }
 }
 

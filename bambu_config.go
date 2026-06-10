@@ -26,32 +26,17 @@ func buildTrayEntityLookup(allTrays []BambuTrayInfo) string {
 }
 
 func buildActiveTrayDetection(allTrays []BambuTrayInfo) string {
-	var checks []string
-	externalTrays := filterTrays(allTrays, func(t BambuTrayInfo) bool { return t.AMSNumber == 0 })
-	amsTrays := filterTrays(allTrays, func(t BambuTrayInfo) bool { return t.AMSNumber > 0 })
-
+	if len(allTrays) == 0 {
+		return "-1"
+	}
 	activeCheck := "state_attr('%s', 'active') in [true, 'true', 'True']"
-
-	for _, ext := range externalTrays {
-		checks = append(checks, fmt.Sprintf(`
-          {%% if %s %%}
-            %d
-          {%% endif %%}`, fmt.Sprintf(activeCheck, ext.EntityID), ext.CompositeID))
+	expr := "-1"
+	for i := len(allTrays) - 1; i >= 0; i-- {
+		t := allTrays[i]
+		check := fmt.Sprintf(activeCheck, t.EntityID)
+		expr = fmt.Sprintf("(%d if %s else %s)", t.CompositeID, check, expr)
 	}
-
-	amsNumbers := uniqueAMSNumbers(amsTrays)
-	for _, amsNumber := range amsNumbers {
-		for _, tray := range amsTrays {
-			if tray.AMSNumber != amsNumber {
-				continue
-			}
-			checks = append(checks, fmt.Sprintf(`
-          {%% if %s %%}
-            %d
-          {%% endif %%}`, fmt.Sprintf(activeCheck, tray.EntityID), tray.CompositeID))
-		}
-	}
-	return strings.Join(checks, "")
+	return expr
 }
 
 func filterTrays(trays []BambuTrayInfo, fn func(BambuTrayInfo) bool) []BambuTrayInfo {
@@ -80,9 +65,10 @@ func buildFilamentUsageTemplate(printWeightEntity, printProgressEntity string) s
 	if printWeightEntity == "" || printProgressEntity == "" {
 		return "0"
 	}
+	// Single-line template: multi-line {% set %} breaks YAML block scalars (unindented lines).
 	return fmt.Sprintf(
-		"{%% set w = states('%s') | float(0) %%}\n{%% set p = states('%s') | float(0) %%}\n{%% set pct = (p / 100.0) if p > 1 else p %%}\n{{ (w * pct) | round(3) }}",
-		printWeightEntity, printProgressEntity,
+		"{{ (states('%s') | float(0)) * ((states('%s') | float(0) / 100.0) if (states('%s') | float(0) > 1) else (states('%s') | float(0))) | round(3) }}",
+		printWeightEntity, printProgressEntity, printProgressEntity, printProgressEntity,
 	)
 }
 
@@ -158,7 +144,7 @@ template:
 
       - name: "FilaBridge %s Active Tray"
         unique_id: filabridge-%s-active-tray
-        state: >%s
+        state: "{{ %s }}"
         availability: >
           {{ expand([
             %s
@@ -201,6 +187,10 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
         id: tray
         trigger: state
       - entity_id: %s
+        to: running
+        id: print_start
+        trigger: state
+      - entity_id: %s
         to:
           - finish
           - idle
@@ -221,7 +211,8 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
         {%% endif %%}
       tray_composite: |-
         {%% if trigger.id == 'print_end' %%}
-          {{ states('input_number.%s%s_last_tray') | int(-1) }}
+          {%% set active_tray = states('sensor.%s%s_active_tray') | int(-1) %%}
+          {{ active_tray if active_tray >= 0 else states('input_number.%s%s_last_tray') | int(-1) }}
         {%% else %%}
           {{ old_tray }}
         {%% endif %%}
@@ -233,6 +224,15 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
       color: "{{ state_attr(tray_sensor, 'color') | default('') }}"
     actions:
       - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.id == 'print_start' }}"
+            sequence:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.%s%s_last_tray
+                data:
+                  value: "{{ states('sensor.%s%s_active_tray') | int(-1) }}"
           - conditions:
               - condition: template
                 value_template: "{{ trigger.id == 'tray' }}"
@@ -255,6 +255,11 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
                           entity_id: sensor.%s%s_filament_usage_meter
                         data:
                           value: "0"
+              - action: utility_meter.calibrate
+                target:
+                  entity_id: sensor.%s%s_filament_usage_meter
+                data:
+                  value: "0"
               - action: input_number.set_value
                 target:
                   entity_id: input_number.%s%s_last_tray
@@ -265,7 +270,7 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
                 value_template: >-
                   {{ trigger.id == 'print_end'
                      and trigger.from_state is not none
-                     and trigger.from_state.state not in ['unavailable', 'unknown', 'idle', 'finish'] }}
+                     and trigger.from_state.state in ['running', 'pause', 'prepare', 'slicing', 'failed'] }}
             sequence:
               - choose:
                   - conditions:
@@ -280,11 +285,11 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
                           filament_used_weight: "{{ tray_weight }}"
                           filament_color: "{{ color }}"
                           filament_active_tray_id: "{{ tray_sensor }}"
-                      - action: utility_meter.calibrate
-                        target:
-                          entity_id: sensor.%s%s_filament_usage_meter
-                        data:
-                          value: "0"
+              - action: utility_meter.calibrate
+                target:
+                  entity_id: sensor.%s%s_filament_usage_meter
+                data:
+                  value: "0"
     mode: single
 
   - id: 'filabridge_tray_change_%s'
@@ -330,10 +335,13 @@ func generateBambuAutomationsYAML(prefix string, allTrays []BambuTrayInfo, webho
 		prefix, prefix,
 		filabridgeEntityPrefix, prefix,
 		printEndEntity,
-		filabridgeEntityPrefix, prefix,
+		printEndEntity,
+		filabridgeEntityPrefix, prefix, filabridgeEntityPrefix, prefix,
 		trayEntityLookup,
 		filabridgeEntityPrefix, prefix,
+		filabridgeEntityPrefix, prefix, filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix,
+		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix,

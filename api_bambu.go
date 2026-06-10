@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -20,6 +23,7 @@ func (ws *WebServer) registerBambuRoutes(api *gin.RouterGroup) {
 	api.POST("/ha/printers", ws.haRegisterPrinterHandler)
 	api.DELETE("/ha/printers/:id", ws.haRemovePrinterHandler)
 	api.GET("/ha/automations/:id", ws.haAutomationsHandler)
+	api.GET("/ha/validate/:id", ws.haValidateHandler)
 	api.POST("/trays/assign", ws.trayAssignHandler)
 }
 
@@ -31,8 +35,15 @@ func (ws *WebServer) bambuWebhookHealthHandler(c *gin.Context) {
 }
 
 func (ws *WebServer) bambuWebhookHandler(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON payload"})
+		return
+	}
+	body = bytes.TrimPrefix(body, []byte{0xEF, 0xBB, 0xBF})
+
 	var payload BambuWebhookPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON payload"})
 		return
 	}
@@ -219,6 +230,34 @@ func (ws *WebServer) haAutomationsHandler(c *gin.Context) {
 		"webhook_url": webhookURL + "/api/webhook",
 		"filename":    "filabridge_" + normalizeBambuHAPrefix(cfg.HAPrefix) + ".yaml",
 	})
+}
+
+func (ws *WebServer) haValidateHandler(c *gin.Context) {
+	printerID := c.Param("id")
+	configs, err := ws.bridge.GetAllPrinterConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	cfg, ok := configs[printerID]
+	if !ok || cfg.Driver != DriverBambuHA {
+		c.JSON(http.StatusNotFound, gin.H{"error": "bambu printer not found"})
+		return
+	}
+
+	ha, err := ws.bridge.NewHAClientFromConfig()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	states, err := ha.GetStates()
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := ValidateFilaBridgeHAEntities(cfg.HAPrefix, states)
+	c.JSON(http.StatusOK, result)
 }
 
 func (ws *WebServer) trayAssignHandler(c *gin.Context) {

@@ -329,3 +329,63 @@ func TestResolveFilamentUsageSnapmakerOwlMultiMaterial(t *testing.T) {
 		}
 	}
 }
+
+func TestDistributeFilamentProportionally(t *testing.T) {
+	gcodeUsage := map[int]float64{0: 60, 1: 40}
+	got := distributeFilamentProportionally(10, gcodeUsage)
+
+	if got[0] != 6 || got[1] != 4 {
+		t.Fatalf("expected proportional split 6g/4g, got %v", got)
+	}
+}
+
+func TestScaleFilamentUsage(t *testing.T) {
+	gcodeUsage := map[int]float64{0: 10}
+	got := scaleFilamentUsage(gcodeUsage, 0.4)
+
+	if got[0] != 4 {
+		t.Fatalf("expected 4g at 40%% progress, got %v", got[0])
+	}
+}
+
+func TestClampUnitInterval(t *testing.T) {
+	if clampUnitInterval(-0.5) != 0 {
+		t.Fatal("expected negative clamped to 0")
+	}
+	if clampUnitInterval(1.5) != 1 {
+		t.Fatal("expected value above 1 clamped to 1")
+	}
+	if clampUnitInterval(0.42) != 0.42 {
+		t.Fatal("expected in-range value unchanged")
+	}
+}
+
+func TestDistributeFilamentProportionally(t *testing.T) {
+	gcodeUsage := map[int]float64{0: 60, 1: 40}
+	got := distributeFilamentProportionally(10, gcodeUsage)
+
+	if got[0] != 6 || got[1] != 4 {
+		t.Fatalf("expected proportional split 6g/4g, got %v", got)
+	}
+}
+
+func TestScaleFilamentUsage(t *testing.T) {
+	gcodeUsage := map[int]float64{0: 10}
+	got := scaleFilamentUsage(gcodeUsage, 0.4)
+
+	if got[0] != 4 {
+		t.Fatalf("expected 4g at 40%% progress, got %v", got[0])
+	}
+}
+
+func TestClampUnitInterval(t *testing.T) {
+	if clampUnitInterval(-0.5) != 0 {
+		t.Fatal("expected negative clamped to 0")
+	}
+	if clampUnitInterval(1.5) != 1 {
+		t.Fatal("expected value above 1 clamped to 1")
+	}
+	if clampUnitInterval(0.42) != 0.42 {
+		t.Fatal("expected in-range value unchanged")
+	}
+}

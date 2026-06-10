@@ -34,6 +34,7 @@ function loadPrinters() {
                             </div>
                             <div class="printer-actions">
                                 <button class="btn btn-small" onclick="downloadHAConfig('${printerId}')">📄 HA Config</button>
+                                <button class="btn btn-small" onclick="validateHASetup('${printerId}')">✓ Validar HA</button>
                                 <button class="btn btn-small btn-danger" onclick="deletePrinter('${printerId}')">🗑️ Delete</button>
                             </div>
                         `;

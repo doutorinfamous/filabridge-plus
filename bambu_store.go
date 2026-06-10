@@ -242,6 +242,24 @@ func (b *FilamentBridge) FindBambuTrayByUniqueID(trayUniqueID string) (*BambuTra
 	return &tray, nil
 }
 
+// FindBambuTrayByEntityID looks up a tray by Home Assistant entity_id.
+func (b *FilamentBridge) FindBambuTrayByEntityID(entityID string) (*BambuTray, error) {
+	var tray BambuTray
+	var isExternal int
+	err := b.db.QueryRow(`
+		SELECT tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external
+		FROM bambu_trays WHERE entity_id = ?
+	`, entityID).Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &isExternal)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	tray.IsExternal = isExternal == 1
+	return &tray, nil
+}
+
 // FindBambuTrayByDisplayName resolves a display name to tray unique_id.
 func (b *FilamentBridge) FindBambuTrayByDisplayName(displayName string) (*BambuTray, error) {
 	var tray BambuTray

@@ -4,23 +4,12 @@ import "time"
 
 // ToolheadMapping represents a mapping between a printer toolhead and a spool.
 type ToolheadMapping struct {
+	PrinterID   string    `json:"printer_id"`
 	PrinterName string    `json:"printer_name"`
 	ToolheadID  int       `json:"toolhead_id"`
 	SpoolID     int       `json:"spool_id"`
 	MappedAt    time.Time `json:"mapped_at"`
 	DisplayName string    `json:"display_name,omitempty"` // Custom toolhead name or empty for default
-}
-
-// PrintHistory represents a record of filament usage.
-type PrintHistory struct {
-	ID            int       `json:"id"`
-	PrinterName   string    `json:"printer_name"`
-	ToolheadID    int       `json:"toolhead_id"`
-	SpoolID       int       `json:"spool_id"`
-	FilamentUsed  float64   `json:"filament_used"`
-	PrintStarted  time.Time `json:"print_started"`
-	PrintFinished time.Time `json:"print_finished"`
-	JobName       string    `json:"job_name"`
 }
 
 // PrintError represents a failed print processing attempt.

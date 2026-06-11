@@ -190,6 +190,42 @@ func FindTrayByEntityID(b *core.FilamentBridge, entityID string) (*Tray, error) 
 	return &tray, nil
 }
 
+// FindTrayPrinterID returns the printer_id owning a tray (empty when unknown).
+func FindTrayPrinterID(b *core.FilamentBridge, trayUniqueID string) (string, error) {
+	var printerID string
+	err := b.DB.QueryRow(
+		"SELECT printer_id FROM bambu_trays WHERE tray_unique_id = ?",
+		trayUniqueID,
+	).Scan(&printerID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return printerID, nil
+}
+
+// FindPrinterIDByPrefix resolves a Bambu HA prefix to the printer_id (empty when unknown).
+func FindPrinterIDByPrefix(b *core.FilamentBridge, prefix string) (string, error) {
+	prefix = NormalizePrefix(prefix)
+	if prefix == "" {
+		return "", nil
+	}
+	var printerID string
+	err := b.DB.QueryRow(
+		"SELECT printer_id FROM printer_configs WHERE driver = ? AND lower(ha_prefix) = ? LIMIT 1",
+		core.DriverBambuHA, prefix,
+	).Scan(&printerID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return printerID, nil
+}
+
 // FindTrayByDisplayName resolves a display name to tray unique_id.
 func FindTrayByDisplayName(b *core.FilamentBridge, displayName string) (*Tray, error) {
 	var tray Tray

@@ -71,39 +71,28 @@ func (ws *WebServer) BuildStatus() (*core.PrinterStatus, error) {
 		}
 
 		printerName := printerConfig.Name
-		mappings, err := b.GetToolheadMappings(printerName)
+		mappings, err := b.GetToolheadMappings(printerID)
 		if err != nil {
 			log.Printf("Error getting toolhead mappings for %s: %v", printerName, err)
 			mappings = make(map[int]core.ToolheadMapping)
 		}
 
-		toolheadNames, err := b.GetAllToolheadNames(printerID)
-		if err != nil {
-			log.Printf("Warning: Failed to get toolhead names for printer %s: %v", printerID, err)
-			toolheadNames = make(map[int]string)
-		}
-
 		// Create enhanced mappings for ALL toolheads (including unmapped ones)
 		enhancedMappings := make(map[int]core.ToolheadMapping)
 		for toolheadID := 0; toolheadID < printerConfig.Toolheads; toolheadID++ {
-			var displayName string
-			if name, exists := toolheadNames[toolheadID]; exists {
-				displayName = name
-			} else {
-				displayName = core.DefaultToolheadDisplayName(toolheadID)
-			}
-
-			if mapping, exists := mappings[toolheadID]; exists {
-				mapping.DisplayName = displayName
-				enhancedMappings[toolheadID] = mapping
-			} else {
-				enhancedMappings[toolheadID] = core.ToolheadMapping{
-					PrinterName: printerName,
-					ToolheadID:  toolheadID,
-					SpoolID:     0, // No spool mapped
-					DisplayName: displayName,
+			mapping, exists := mappings[toolheadID]
+			if !exists {
+				mapping = core.ToolheadMapping{
+					PrinterID:  printerID,
+					ToolheadID: toolheadID,
+					SpoolID:    0, // No spool mapped
 				}
 			}
+			mapping.PrinterName = printerName
+			if mapping.DisplayName == "" {
+				mapping.DisplayName = core.DefaultToolheadDisplayName(toolheadID)
+			}
+			enhancedMappings[toolheadID] = mapping
 		}
 		status.ToolheadMappings[printerID] = enhancedMappings
 	}

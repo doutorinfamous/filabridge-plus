@@ -138,7 +138,7 @@ func TestMapToolheadHandlerUnmapAutoAssignsToStorage(t *testing.T) {
 	if err := bridge.SetAutoAssignPreviousSpoolLocation("Drybox"); err != nil {
 		t.Fatalf("failed to set auto-assign location: %v", err)
 	}
-	if err := bridge.SetToolheadMapping("My Printer", 0, 10); err != nil {
+	if err := bridge.SetToolheadMapping("printer1", 0, 10); err != nil {
 		t.Fatalf("failed to set initial mapping: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestMapToolheadHandlerUnmapAutoAssignsToStorage(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	spoolID, err := bridge.GetToolheadMapping("My Printer", 0)
+	spoolID, err := bridge.GetToolheadMapping("printer1", 0)
 	if err != nil {
 		t.Fatalf("GetToolheadMapping failed: %v", err)
 	}

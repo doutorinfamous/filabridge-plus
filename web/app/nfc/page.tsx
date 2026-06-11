@@ -33,7 +33,9 @@ function entrySubtitle(entry: NfcUrlEntry): string {
   }
   return entry.location_type === "ams_slot"
     ? "Slot AMS (Bambu)"
-    : "Local de armazenamento";
+    : entry.location_type === "toolhead"
+      ? "Toolhead da impressora"
+      : "Local de armazenamento";
 }
 
 function entryKey(entry: NfcUrlEntry): string {

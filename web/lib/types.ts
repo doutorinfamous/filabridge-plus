@@ -47,10 +47,38 @@ export interface PrinterData {
 }
 
 export interface ToolheadMapping {
+  printer_id: string;
   printer_name: string;
   toolhead_id: number;
   spool_id: number;
   display_name?: string;
+}
+
+export interface PrintJobUsage {
+  spool_id: number;
+  toolhead_id?: number;
+  tray_unique_id?: string;
+  slot_name: string;
+  grams: number;
+}
+
+export interface PrintJob {
+  id: number;
+  printer_id: string;
+  printer_name: string;
+  job_name: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  status: "printing" | "completed" | "cancelled" | "failed";
+  total_grams: number;
+  usage: PrintJobUsage[];
+}
+
+export interface PrintHistoryResponse {
+  jobs: PrintJob[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface PrintError {
@@ -137,10 +165,11 @@ export interface NfcUrlEntry {
   brand?: string;
   color_hex?: string;
   // location
-  location_type?: string;
+  location_type?: "storage" | "ams_slot" | "toolhead";
   location_name?: string;
   display_name?: string;
   printer_name?: string;
+  toolhead_display_name?: string;
   tray_unique_id?: string;
 }
 
@@ -171,4 +200,27 @@ export interface HAValidation {
   meter_missing: boolean;
   checks: HAValidationCheck[];
   fix_steps?: string[];
+}
+
+export interface DevDbTable {
+  name: string;
+  row_count: number;
+}
+
+export interface DevDbColumnSchema {
+  name: string;
+  type: string;
+  not_null: boolean;
+  primary_key: boolean;
+  default_value?: string;
+}
+
+export interface DevDbTableData {
+  table: string;
+  schema?: DevDbColumnSchema[];
+  columns: string[];
+  rows: Record<string, unknown>[];
+  total: number;
+  limit: number;
+  offset: number;
 }

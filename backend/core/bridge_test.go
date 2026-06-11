@@ -24,7 +24,7 @@ func newTestBridge(t *testing.T) *FilamentBridge {
 	return bridge
 }
 
-func TestProcessedJobsDedup(t *testing.T) {
+func TestPrintJobsDedup(t *testing.T) {
 	bridge := newTestBridge(t)
 
 	printerID := "printer_test"
@@ -38,20 +38,21 @@ func TestProcessedJobsDedup(t *testing.T) {
 		t.Fatal("job should not be processed initially")
 	}
 
-	if err := bridge.MarkJobProcessed(printerID, filename); err != nil {
-		t.Fatalf("MarkJobProcessed failed: %v", err)
-	}
-
-	processed, err = bridge.IsJobProcessed(printerID, filename)
+	jobID, err := bridge.StartPrintJob(printerID, filename)
 	if err != nil {
-		t.Fatalf("IsJobProcessed failed: %v", err)
+		t.Fatalf("StartPrintJob failed: %v", err)
 	}
-	if !processed {
-		t.Fatal("job should be marked processed")
+	if jobID <= 0 {
+		t.Fatal("expected a valid job ID")
 	}
 
-	if err := bridge.ClearProcessedJob(printerID, filename); err != nil {
-		t.Fatalf("ClearProcessedJob failed: %v", err)
+	// Starting the same job again must reuse the open job (idempotent polling)
+	sameJobID, err := bridge.StartPrintJob(printerID, filename)
+	if err != nil {
+		t.Fatalf("StartPrintJob (repeat) failed: %v", err)
+	}
+	if sameJobID != jobID {
+		t.Fatalf("expected same open job %d, got %d", jobID, sameJobID)
 	}
 
 	processed, err = bridge.IsJobProcessed(printerID, filename)
@@ -59,7 +60,36 @@ func TestProcessedJobsDedup(t *testing.T) {
 		t.Fatalf("IsJobProcessed failed: %v", err)
 	}
 	if processed {
-		t.Fatal("job should be cleared after reprint start")
+		t.Fatal("open job should not count as processed")
+	}
+
+	if err := bridge.FinishPrintJob(printerID, filename, JobStatusCompleted); err != nil {
+		t.Fatalf("FinishPrintJob failed: %v", err)
+	}
+
+	processed, err = bridge.IsJobProcessed(printerID, filename)
+	if err != nil {
+		t.Fatalf("IsJobProcessed failed: %v", err)
+	}
+	if !processed {
+		t.Fatal("job should be marked processed after finish")
+	}
+
+	// Reprint of the same file opens a new job and stops counting as processed
+	newJobID, err := bridge.StartPrintJob(printerID, filename)
+	if err != nil {
+		t.Fatalf("StartPrintJob (reprint) failed: %v", err)
+	}
+	if newJobID == jobID {
+		t.Fatal("reprint should create a new job")
+	}
+
+	processed, err = bridge.IsJobProcessed(printerID, filename)
+	if err != nil {
+		t.Fatalf("IsJobProcessed failed: %v", err)
+	}
+	if processed {
+		t.Fatal("job should not be processed after reprint start")
 	}
 }
 

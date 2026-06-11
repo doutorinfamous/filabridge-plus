@@ -32,8 +32,88 @@ func ProcessWebhook(b *core.FilamentBridge, payload WebhookPayload, ha *homeassi
 		result := processTrayChange(b, payload, ha, idMap)
 		logWebhookResult("tray_change", payload.TrayEntityID, result)
 		return result
+	case "print_started":
+		result := processPrintStarted(b, payload)
+		logWebhookResult("print_started", payload.PrinterPrefix, result)
+		return result
+	case "print_finished":
+		result := processPrintFinished(b, payload)
+		logWebhookResult("print_finished", payload.PrinterPrefix, result)
+		return result
 	default:
 		return WebhookResult{Status: "ignored", Reason: "unknown event"}
+	}
+}
+
+// processPrintStarted opens a print job for a Bambu printer.
+func processPrintStarted(b *core.FilamentBridge, payload WebhookPayload) WebhookResult {
+	printerID, err := FindPrinterIDByPrefix(b, payload.PrinterPrefix)
+	if err != nil {
+		return WebhookResult{Status: "error", Message: err.Error()}
+	}
+	if printerID == "" {
+		return WebhookResult{Status: "ignored", Reason: "unknown printer_prefix"}
+	}
+
+	jobName := strings.TrimSpace(payload.JobName)
+	if jobName == "" {
+		jobName = "unknown"
+	}
+	if _, err := b.StartPrintJob(printerID, jobName); err != nil {
+		return WebhookResult{Status: "error", Message: err.Error()}
+	}
+	return WebhookResult{Status: "success", Action: "job_started"}
+}
+
+// processPrintFinished closes the open print job for a Bambu printer.
+func processPrintFinished(b *core.FilamentBridge, payload WebhookPayload) WebhookResult {
+	printerID, err := FindPrinterIDByPrefix(b, payload.PrinterPrefix)
+	if err != nil {
+		return WebhookResult{Status: "error", Message: err.Error()}
+	}
+	if printerID == "" {
+		return WebhookResult{Status: "ignored", Reason: "unknown printer_prefix"}
+	}
+
+	// ha-bambulab reports "finish" on success; anything else closing a print
+	// (idle after failure, etc.) counts as failed.
+	status := core.JobStatusFailed
+	if strings.EqualFold(strings.TrimSpace(payload.PrintState), "finish") {
+		status = core.JobStatusCompleted
+	}
+
+	jobName := strings.TrimSpace(payload.JobName)
+	if jobName != "" {
+		if err := b.FinishPrintJob(printerID, jobName, status); err != nil {
+			return WebhookResult{Status: "error", Message: err.Error()}
+		}
+	} else if err := b.FinishLatestOpenJob(printerID, status); err != nil {
+		return WebhookResult{Status: "error", Message: err.Error()}
+	}
+	return WebhookResult{Status: "success", Action: "job_finished"}
+}
+
+// recordTrayUsage logs a filament usage event for the printer's open job.
+// History recording failures never fail the webhook (the Spoolman debit already happened).
+func recordTrayUsage(b *core.FilamentBridge, payload WebhookPayload, trayUniqueID string, spoolID int, grams float64) {
+	printerID, err := FindTrayPrinterID(b, trayUniqueID)
+	if err != nil || printerID == "" {
+		if prefixID, prefixErr := FindPrinterIDByPrefix(b, payload.PrinterPrefix); prefixErr == nil && prefixID != "" {
+			printerID = prefixID
+		}
+	}
+	if printerID == "" {
+		log.Printf("Warning: could not resolve printer for tray %s — usage not recorded in history", trayUniqueID)
+		return
+	}
+
+	jobID, err := b.GetOrCreateOpenJob(printerID, strings.TrimSpace(payload.JobName))
+	if err != nil {
+		log.Printf("Warning: failed to resolve print job for %s: %v", printerID, err)
+		return
+	}
+	if err := b.LogTrayUsage(jobID, printerID, trayUniqueID, spoolID, grams); err != nil {
+		log.Printf("Warning: failed to record filament usage for %s tray %s: %v", printerID, trayUniqueID, err)
 	}
 }
 
@@ -107,6 +187,8 @@ func processSpoolUsage(b *core.FilamentBridge, payload WebhookPayload, ha *homea
 	if err := b.Spoolman.UseSpoolWeight(spool.ID, weight); err != nil {
 		return WebhookResult{Status: "error", Message: err.Error()}
 	}
+
+	recordTrayUsage(b, payload, trayUniqueID, spool.ID, weight)
 
 	tagStored := false
 	if spoolman.IsValidTrayUUID(payload.TrayUUID) {

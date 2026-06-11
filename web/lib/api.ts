@@ -8,8 +8,12 @@ import type {
   HAConfig,
   HAValidation,
   LocationEntry,
+  DevDbTable,
+  DevDbTableData,
   NfcUrlEntry,
   PrintError,
+  PrintHistoryResponse,
+  PrintJob,
   PrinterConfigInfo,
   Spool,
   StatusMessage,
@@ -156,6 +160,23 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ name }) }
     ),
 
+  // Print history
+  getPrintHistory: (params?: {
+    limit?: number;
+    offset?: number;
+    printerId?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    if (params?.printerId) q.set("printer_id", params.printerId);
+    const query = q.toString();
+    return request<PrintHistoryResponse>(
+      `/api/history/jobs${query ? `?${query}` : ""}`
+    );
+  },
+  getPrintJob: (id: number) => request<PrintJob>(`/api/history/jobs/${id}`),
+
   // Print errors
   getPrintErrors: () =>
     request<{ errors: PrintError[] | null }>("/api/print-errors"),
@@ -176,6 +197,17 @@ export const api = {
     request<{ urls: NfcUrlEntry[] | null; spoolman_url: string }>(
       "/api/nfc/urls"
     ),
+
+  // Dev DB (temporary debug)
+  getDevDbTables: () =>
+    request<{ tables: DevDbTable[] }>("/api/dev/db/tables"),
+  getDevDbTableData: (name: string, limit = 100, offset = 0) => {
+    const q = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+    });
+    return request<DevDbTableData>(`/api/dev/db/tables/${encodeURIComponent(name)}?${q}`);
+  },
 
   // Home Assistant / Bambu
   getHAConfig: () => request<HAConfig>("/api/ha/config"),

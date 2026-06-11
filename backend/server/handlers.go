@@ -108,13 +108,23 @@ func (ws *WebServer) mapToolheadHandler(c *gin.Context) {
 
 	// Handle unmapping (SpoolID = 0) or mapping (SpoolID > 0)
 	if req.SpoolID == 0 {
-		previousSpoolID, err := ws.bridge.GetToolheadMapping(req.PrinterName, req.ToolheadID)
+		printerID, err := ws.bridge.FindPrinterIDByName(req.PrinterName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if printerID == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Printer not found"})
+			return
+		}
+
+		previousSpoolID, err := ws.bridge.GetToolheadMapping(printerID, req.ToolheadID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		if err := ws.bridge.UnmapToolhead(req.PrinterName, req.ToolheadID); err != nil {
+		if err := ws.bridge.UnmapToolhead(printerID, req.ToolheadID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -156,7 +166,12 @@ func (ws *WebServer) availableSpoolsHandler(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid toolhead_id"})
 			return
 		}
-		exclude.PrinterName = printerName
+		printerID, err := ws.bridge.FindPrinterIDByName(printerName)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		exclude.PrinterID = printerID
 		exclude.ToolheadID = toolheadID
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "provide printer_name+toolhead_id or tray_unique_id"})
@@ -633,19 +648,22 @@ func (ws *WebServer) testPrintCompleteHandler(c *gin.Context) {
 	}
 
 	// Get printer config - first try by name, then by ID
-	var config core.PrinterConfig
+	var printerID string
 	var found bool
 
-	for _, printerConfig := range ws.bridge.Config.Printers {
+	for id, printerConfig := range ws.bridge.Config.Printers {
 		if printerConfig.Name == request.PrinterName {
-			config = printerConfig
+			printerID = id
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		config, found = ws.bridge.Config.Printers[request.PrinterName]
+		if _, ok := ws.bridge.Config.Printers[request.PrinterName]; ok {
+			printerID = request.PrinterName
+			found = true
+		}
 	}
 
 	if !found {
@@ -653,9 +671,7 @@ func (ws *WebServer) testPrintCompleteHandler(c *gin.Context) {
 		return
 	}
 
-	printerName := core.ResolvePrinterName(config)
-
-	if err := ws.bridge.ProcessFilamentUsage(printerName, request.FilamentUsage, request.JobName); err != nil {
+	if err := ws.bridge.ProcessFilamentUsage(printerID, request.FilamentUsage, request.JobName); err != nil {
 		log.Printf("Error processing filament usage: %v", err)
 	}
 

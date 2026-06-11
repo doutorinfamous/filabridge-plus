@@ -62,15 +62,18 @@ type TrayInfo struct {
 
 // WebhookPayload is the inbound webhook body from Home Assistant.
 type WebhookPayload struct {
-	Event        string  `json:"event"`
-	ActiveTrayID string  `json:"active_tray_id"`
-	TrayEntityID string  `json:"tray_entity_id"`
-	TrayUUID     string  `json:"tray_uuid"`
-	Name         string  `json:"name"`
-	Material     string  `json:"material"`
-	Color        string  `json:"color"`
-	UsedWeight   float64 `json:"used_weight"`
-	UsedLength   float64 `json:"used_length"`
+	Event         string  `json:"event"`
+	ActiveTrayID  string  `json:"active_tray_id"`
+	TrayEntityID  string  `json:"tray_entity_id"`
+	TrayUUID      string  `json:"tray_uuid"`
+	Name          string  `json:"name"`
+	Material      string  `json:"material"`
+	Color         string  `json:"color"`
+	UsedWeight    float64 `json:"used_weight"`
+	UsedLength    float64 `json:"used_length"`
+	PrinterPrefix string  `json:"printer_prefix"`
+	JobName       string  `json:"job_name"`
+	PrintState    string  `json:"print_state"`
 }
 
 // WebhookResult is returned from webhook processing.

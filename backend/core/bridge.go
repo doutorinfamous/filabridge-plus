@@ -92,21 +92,30 @@ func (b *FilamentBridge) initDatabase() error {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS toolhead_mappings (
-			printer_name TEXT,
-			toolhead_id INTEGER,
+			printer_id TEXT NOT NULL,
+			toolhead_id INTEGER NOT NULL,
+			display_name TEXT NOT NULL DEFAULT '',
 			spool_id INTEGER,
 			mapped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (printer_name, toolhead_id)
+			PRIMARY KEY (printer_id, toolhead_id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS print_history (
+		`CREATE TABLE IF NOT EXISTS print_jobs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			printer_name TEXT,
+			printer_id TEXT NOT NULL,
+			job_name TEXT NOT NULL DEFAULT '',
+			started_at TIMESTAMP,
+			finished_at TIMESTAMP,
+			status TEXT NOT NULL DEFAULT 'printing'
+		)`,
+		`CREATE TABLE IF NOT EXISTS filament_usage (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			job_id INTEGER,
+			printer_id TEXT NOT NULL,
 			toolhead_id INTEGER,
-			spool_id INTEGER,
-			filament_used REAL,
-			print_started TIMESTAMP,
-			print_finished TIMESTAMP,
-			job_name TEXT
+			tray_unique_id TEXT,
+			spool_id INTEGER NOT NULL,
+			grams REAL NOT NULL,
+			recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS nfc_sessions (
 			session_id TEXT PRIMARY KEY,
@@ -117,18 +126,6 @@ func (b *FilamentBridge) initDatabase() error {
 			is_printer_location BOOLEAN,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			expires_at TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS toolhead_names (
-			printer_id TEXT,
-			toolhead_id INTEGER,
-			display_name TEXT NOT NULL,
-			PRIMARY KEY (printer_id, toolhead_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS processed_jobs (
-			printer_id TEXT NOT NULL,
-			filename TEXT NOT NULL,
-			processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (printer_id, filename)
 		)`,
 	}
 
@@ -148,6 +145,12 @@ func (b *FilamentBridge) initDatabase() error {
 
 	if err := b.migrateBambuSchema(); err != nil {
 		log.Printf("Warning: Failed to migrate Bambu schema: %v", err)
+	}
+
+	// Rebuild legacy tables (printer_name keys, toolhead_names, print_history,
+	// processed_jobs) into the printer_id based schema.
+	if err := b.migrateSchemaV2(); err != nil {
+		return fmt.Errorf("failed to migrate database schema: %w", err)
 	}
 
 	// Migrate existing FilaBridge locations to Spoolman
@@ -304,31 +307,17 @@ func (b *FilamentBridge) migrateToolheadMappingsToSpoolman() error {
 	}
 
 	createdCount := 0
-	for printerName, printerMappings := range allMappings {
-		var printerID string
-		for pid, config := range printerConfigs {
-			if config.Name == printerName {
-				printerID = pid
-				break
-			}
-		}
-
-		if printerID == "" {
-			log.Printf("Migration: Could not find printer ID for printer name '%s', skipping", printerName)
+	for printerID, printerMappings := range allMappings {
+		config, exists := printerConfigs[printerID]
+		if !exists {
+			log.Printf("Migration: Could not find printer config for printer ID '%s', skipping", printerID)
 			continue
 		}
+		printerName := config.Name
 
-		toolheadNames, err := b.GetAllToolheadNames(printerID)
-		if err != nil {
-			log.Printf("Warning: Failed to get toolhead names for printer %s: %v", printerID, err)
-			toolheadNames = make(map[int]string)
-		}
-
-		for toolheadID := range printerMappings {
-			var displayName string
-			if name, exists := toolheadNames[toolheadID]; exists {
-				displayName = name
-			} else {
+		for toolheadID, mapping := range printerMappings {
+			displayName := mapping.DisplayName
+			if displayName == "" {
 				displayName = DefaultToolheadDisplayName(toolheadID)
 			}
 
@@ -560,6 +549,31 @@ func (b *FilamentBridge) GetBambuPrinterConfigs() (map[string]PrinterConfig, err
 	return result, nil
 }
 
+// FindPrinterIDByName resolves a printer display name to its printer_id.
+// Returns an empty string when no printer matches.
+func (b *FilamentBridge) FindPrinterIDByName(name string) (string, error) {
+	var printerID string
+	err := b.DB.QueryRow("SELECT printer_id FROM printer_configs WHERE name = ? LIMIT 1", name).Scan(&printerID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to find printer by name: %w", err)
+	}
+	return printerID, nil
+}
+
+// ResolvePrinterDisplayName returns the configured display name for a printer ID,
+// falling back to the ID itself when unknown.
+func (b *FilamentBridge) ResolvePrinterDisplayName(printerID string) string {
+	var name string
+	err := b.DB.QueryRow("SELECT name FROM printer_configs WHERE printer_id = ?", printerID).Scan(&name)
+	if err != nil || name == "" {
+		return printerID
+	}
+	return name
+}
+
 // SavePrinterConfig saves a printer configuration.
 func (b *FilamentBridge) SavePrinterConfig(printerID string, config PrinterConfig) error {
 	b.Mutex.Lock()
@@ -657,13 +671,13 @@ func (b *FilamentBridge) UpdateConfig(config *Config) error {
 	return nil
 }
 
-// isVirtualPrinterToolheadLocation checks if a location name matches the pattern
-// of a virtual printer toolhead location (e.g., "PrinterName - Toolhead 1" or "PrinterName - Black").
-func (b *FilamentBridge) isVirtualPrinterToolheadLocation(name string) bool {
+// ParseVirtualToolheadLocation returns printer and toolhead display names when name
+// matches a virtual printer toolhead location (e.g., "PrinterName - Toolhead 1").
+func (b *FilamentBridge) ParseVirtualToolheadLocation(name string) (printerName, toolheadDisplayName string, ok bool) {
 	printerConfigs, err := b.GetAllPrinterConfigs()
 	if err != nil {
 		log.Printf("Warning: Could not get printer configurations to check virtual location: %v", err)
-		return false
+		return "", "", false
 	}
 
 	for printerID, printerConfig := range printerConfigs {
@@ -674,21 +688,26 @@ func (b *FilamentBridge) isVirtualPrinterToolheadLocation(name string) bool {
 		}
 
 		for toolheadID := 0; toolheadID < printerConfig.Toolheads; toolheadID++ {
-			expectedNameDefault := fmt.Sprintf("%s - %s", printerConfig.Name, DefaultToolheadDisplayName(toolheadID))
-			if name == expectedNameDefault {
-				return true
+			displayName := DefaultToolheadDisplayName(toolheadID)
+			if customName, exists := toolheadNames[toolheadID]; exists {
+				displayName = customName
 			}
 
-			if displayName, exists := toolheadNames[toolheadID]; exists {
-				expectedNameCustom := fmt.Sprintf("%s - %s", printerConfig.Name, displayName)
-				if name == expectedNameCustom {
-					return true
-				}
+			expectedName := fmt.Sprintf("%s - %s", printerConfig.Name, displayName)
+			if name == expectedName {
+				return printerConfig.Name, displayName, true
 			}
 		}
 	}
 
-	return false
+	return "", "", false
+}
+
+// isVirtualPrinterToolheadLocation checks if a location name matches the pattern
+// of a virtual printer toolhead location (e.g., "PrinterName - Toolhead 1" or "PrinterName - Black").
+func (b *FilamentBridge) isVirtualPrinterToolheadLocation(name string) bool {
+	_, _, ok := b.ParseVirtualToolheadLocation(name)
+	return ok
 }
 
 // Close closes the database connection.

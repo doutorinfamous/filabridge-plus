@@ -116,7 +116,7 @@ func monitorPrinter(b *core.FilamentBridge, printerID string, config core.Printe
 			b.ProcessingPrints[printerID] = false
 			if err == nil {
 				b.CurrentJobFile[printerID] = ""
-				if markErr := b.MarkJobProcessed(printerID, filenameToUse); markErr != nil {
+				if markErr := b.FinishPrintJob(printerID, filenameToUse, core.JobStatusCompleted); markErr != nil {
 					log.Printf("Warning: Failed to mark job as processed for %s (%s): %v", config.IPAddress, printerID, markErr)
 				}
 			}
@@ -141,7 +141,7 @@ func monitorPrinter(b *core.FilamentBridge, printerID string, config core.Printe
 		b.ProcessingPrints[printerID] = false
 		if err == nil {
 			b.CurrentJobFile[printerID] = ""
-			if markErr := b.MarkJobProcessed(printerID, filenameToUse); markErr != nil {
+			if markErr := b.FinishPrintJob(printerID, filenameToUse, core.JobStatusCancelled); markErr != nil {
 				log.Printf("Warning: Failed to mark cancelled job as processed for %s (%s): %v", config.IPAddress, printerID, markErr)
 			}
 		}
@@ -161,8 +161,10 @@ func monitorPrinter(b *core.FilamentBridge, printerID string, config core.Printe
 				b.CurrentJobFile[printerID] = currentJobFilename
 				log.Printf("Stored job filename for %s (%s): %s", config.IPAddress, printerID, currentJobFilename)
 			}
-			if err := b.ClearProcessedJob(printerID, currentJobFilename); err != nil {
-				log.Printf("Warning: Failed to clear processed job for %s (%s): %v", config.IPAddress, printerID, err)
+			// Open the print job (idempotent) so started_at reflects the real start
+			// and the previous completed run of the same file stops counting as processed.
+			if _, err := b.StartPrintJob(printerID, currentJobFilename); err != nil {
+				log.Printf("Warning: Failed to start print job for %s (%s): %v", config.IPAddress, printerID, err)
 			}
 			delete(b.PendingUsage, core.PendingUsageKey(printerID, currentJobFilename))
 		}
@@ -215,7 +217,7 @@ func handlePrintFinished(b *core.FilamentBridge, printerID string, config core.P
 		}
 
 		if len(filamentUsage) == 0 && printerStatus != nil && printerStatus.FilamentUsed > 0 {
-			if weight := filamentUsageFromPrintStats(b, printerName, printerStatus.FilamentUsed); weight > 0 {
+			if weight := filamentUsageFromPrintStats(b, printerID, printerStatus.FilamentUsed); weight > 0 {
 				log.Printf("Using print_stats.filament_used fallback: %.2fmm -> %.2fg", printerStatus.FilamentUsed, weight)
 				logical := map[int]float64{0: weight}
 				meta := &FilamentUsageMetadata{}
@@ -241,7 +243,7 @@ func handlePrintFinished(b *core.FilamentBridge, printerID string, config core.P
 		b.Mutex.Unlock()
 	}
 
-	if err := b.ProcessFilamentUsage(printerName, filamentUsage, filename); err != nil {
+	if err := b.ProcessFilamentUsage(printerID, filamentUsage, filename); err != nil {
 		log.Printf("Error processing filament usage: %v", err)
 		return err
 	}
@@ -270,7 +272,7 @@ func handlePrintCancelled(b *core.FilamentBridge, printerID string, config core.
 	}
 
 	client := NewMoonrakerClient(config.IPAddress, config.APIKey, b.Config.PrinterTimeout, b.Config.PrinterFileDownloadTimeout)
-	resolution, err := resolvePartialFilamentUsage(b, client, printerName, filename, printerStatus, b.Config.PrinterFileDownloadTimeout)
+	resolution, err := resolvePartialFilamentUsage(b, client, printerID, filename, printerStatus, b.Config.PrinterFileDownloadTimeout)
 	if err != nil {
 		errorMsg := fmt.Sprintf("failed to resolve partial filament usage: %v", err)
 		b.AddPrintError(printerName, filename, errorMsg)
@@ -280,7 +282,7 @@ func handlePrintCancelled(b *core.FilamentBridge, printerID string, config core.
 	totalG := sumFilamentUsage(resolution.Usage)
 	log.Printf("Print cancelled — debited %.2fg (source: %s) for %s: %+v", totalG, resolution.Source, filename, resolution.Usage)
 
-	if err := b.ProcessFilamentUsage(printerName, resolution.Usage, filename); err != nil {
+	if err := b.ProcessFilamentUsage(printerID, resolution.Usage, filename); err != nil {
 		log.Printf("Error processing cancelled print filament usage: %v", err)
 		return err
 	}
@@ -291,13 +293,13 @@ func handlePrintCancelled(b *core.FilamentBridge, printerID string, config core.
 func resolvePartialFilamentUsage(
 	b *core.FilamentBridge,
 	client *MoonrakerClient,
-	printerName string,
+	printerID string,
 	filename string,
 	printerStatus *PrinterStatus,
 	fileDownloadTimeout int,
 ) (partialFilamentResolution, error) {
 	if printerStatus != nil && printerStatus.FilamentUsed > 0 {
-		actualG := filamentUsageFromPrintStats(b, printerName, printerStatus.FilamentUsed)
+		actualG := filamentUsageFromPrintStats(b, printerID, printerStatus.FilamentUsed)
 		if actualG > 0 {
 			usage, err := resolvePartialUsageFromPrintStats(client, filename, actualG, fileDownloadTimeout)
 			if err == nil && len(usage) > 0 {
@@ -363,14 +365,14 @@ func applySnapmakerExtruderRemap(client *MoonrakerClient, usage map[int]float64)
 }
 
 // filamentUsageFromPrintStats converts Moonraker print_stats.filament_used (mm) to grams.
-func filamentUsageFromPrintStats(b *core.FilamentBridge, printerName string, filamentUsedMm float64) float64 {
+func filamentUsageFromPrintStats(b *core.FilamentBridge, printerID string, filamentUsedMm float64) float64 {
 	const defaultDiameter = 1.75
 	const defaultDensity = 1.24
 
 	diameter := defaultDiameter
 	density := defaultDensity
 
-	spoolID, err := b.GetToolheadMapping(printerName, 0)
+	spoolID, err := b.GetToolheadMapping(printerID, 0)
 	if err == nil && spoolID > 0 {
 		spool, spoolErr := b.Spoolman.GetSpool(spoolID)
 		if spoolErr == nil && spool.Filament != nil {

@@ -10,7 +10,7 @@ import (
 
 // ExcludeAssignment identifies a mapping context whose current spool stays selectable.
 type ExcludeAssignment struct {
-	PrinterName  string
+	PrinterID    string
 	ToolheadID   int
 	TrayUniqueID string
 }
@@ -23,12 +23,12 @@ func (b *FilamentBridge) GetAssignedSpoolIDs(exclude ExcludeAssignment) (map[int
 	if err != nil {
 		return nil, err
 	}
-	for printerName, printerMappings := range mappings {
+	for printerID, printerMappings := range mappings {
 		for toolheadID, mapping := range printerMappings {
 			if mapping.SpoolID <= 0 {
 				continue
 			}
-			if exclude.PrinterName != "" && printerName == exclude.PrinterName && toolheadID == exclude.ToolheadID {
+			if exclude.PrinterID != "" && printerID == exclude.PrinterID && toolheadID == exclude.ToolheadID {
 				continue
 			}
 			assigned[mapping.SpoolID] = true
@@ -74,7 +74,7 @@ func (b *FilamentBridge) GetAvailableSpools(exclude ExcludeAssignment) ([]spoolm
 	return available, nil
 }
 
-func (b *FilamentBridge) findToolheadAssignmentForSpool(spoolID int) (printerName string, toolheadID int, found bool, err error) {
+func (b *FilamentBridge) findToolheadAssignmentForSpool(spoolID int) (printerID string, toolheadID int, found bool, err error) {
 	b.Mutex.RLock()
 	defer b.Mutex.RUnlock()
 
@@ -82,18 +82,18 @@ func (b *FilamentBridge) findToolheadAssignmentForSpool(spoolID int) (printerNam
 }
 
 // findToolheadAssignmentForSpoolLocked must be called with b.Mutex already held.
-func (b *FilamentBridge) findToolheadAssignmentForSpoolLocked(spoolID int) (printerName string, toolheadID int, found bool, err error) {
+func (b *FilamentBridge) findToolheadAssignmentForSpoolLocked(spoolID int) (printerID string, toolheadID int, found bool, err error) {
 	err = b.DB.QueryRow(
-		"SELECT printer_name, toolhead_id FROM toolhead_mappings WHERE spool_id = ? LIMIT 1",
+		"SELECT printer_id, toolhead_id FROM toolhead_mappings WHERE spool_id = ? LIMIT 1",
 		spoolID,
-	).Scan(&printerName, &toolheadID)
+	).Scan(&printerID, &toolheadID)
 	if err == sql.ErrNoRows {
 		return "", 0, false, nil
 	}
 	if err != nil {
 		return "", 0, false, err
 	}
-	return printerName, toolheadID, true, nil
+	return printerID, toolheadID, true, nil
 }
 
 func (b *FilamentBridge) findBambuTrayAssignmentForSpool(spoolID int) (trayUniqueID string, found bool, err error) {
@@ -126,13 +126,13 @@ func (b *FilamentBridge) ensureSpoolNotAssignedElsewhere(spoolID int, exclude Ex
 		find = b.findToolheadAssignmentForSpoolLocked
 	}
 
-	if printerName, toolheadID, found, err := find(spoolID); err != nil {
+	if printerID, toolheadID, found, err := find(spoolID); err != nil {
 		return err
 	} else if found {
-		if exclude.PrinterName != "" && printerName == exclude.PrinterName && toolheadID == exclude.ToolheadID {
+		if exclude.PrinterID != "" && printerID == exclude.PrinterID && toolheadID == exclude.ToolheadID {
 			return nil
 		}
-		return fmt.Errorf("spool %d is already assigned to %s toolhead %d", spoolID, printerName, toolheadID)
+		return fmt.Errorf("spool %d is already assigned to %s toolhead %d", spoolID, b.ResolvePrinterDisplayName(printerID), toolheadID)
 	}
 
 	if trayID, found, err := b.findBambuTrayAssignmentForSpool(spoolID); err != nil {
@@ -153,27 +153,21 @@ func (b *FilamentBridge) ensureSpoolNotAssignedElsewhere(spoolID int, exclude Ex
 func (b *FilamentBridge) AssignSpoolToLocation(spoolID int, printerName string, toolheadID int, locationName string, isPrinterLocation bool) error {
 	if isPrinterLocation {
 		// This is a printer toolhead location: update FilaBridge toolhead mapping
-		if err := b.SetToolheadMapping(printerName, toolheadID, spoolID); err != nil {
+		printerID, err := b.FindPrinterIDByName(printerName)
+		if err != nil {
+			return fmt.Errorf("failed to resolve printer %q: %w", printerName, err)
+		}
+		if printerID == "" {
+			return fmt.Errorf("printer %q not found", printerName)
+		}
+
+		if err := b.SetToolheadMapping(printerID, toolheadID, spoolID); err != nil {
 			return fmt.Errorf("failed to set toolhead mapping: %w", err)
 		}
 
 		// Get toolhead display name (custom or default)
-		printerConfigs, err := b.GetAllPrinterConfigs()
-		var displayName string
-		if err == nil {
-			for printerID, printerConfig := range printerConfigs {
-				if printerConfig.Name == printerName {
-					name, err := b.GetToolheadName(printerID, toolheadID)
-					if err == nil {
-						displayName = name
-					} else {
-						displayName = DefaultToolheadDisplayName(toolheadID)
-					}
-					break
-				}
-			}
-		}
-		if displayName == "" {
+		displayName, err := b.GetToolheadName(printerID, toolheadID)
+		if err != nil || displayName == "" {
 			displayName = DefaultToolheadDisplayName(toolheadID)
 		}
 
@@ -217,13 +211,13 @@ func (b *FilamentBridge) clearSpoolFromAllToolheads(spoolID int) error {
 		return fmt.Errorf("failed to get toolhead mappings: %w", err)
 	}
 
-	for printerName, printerMappings := range allMappings {
+	for printerID, printerMappings := range allMappings {
 		for toolheadID, mapping := range printerMappings {
 			if mapping.SpoolID == spoolID {
-				if err := b.UnmapToolhead(printerName, toolheadID); err != nil {
-					log.Printf("Warning: Failed to unmap spool %d from %s toolhead %d: %v", spoolID, printerName, toolheadID, err)
+				if err := b.UnmapToolhead(printerID, toolheadID); err != nil {
+					log.Printf("Warning: Failed to unmap spool %d from %s toolhead %d: %v", spoolID, printerID, toolheadID, err)
 				} else {
-					log.Printf("Cleared spool %d from %s toolhead %d", spoolID, printerName, toolheadID)
+					log.Printf("Cleared spool %d from %s toolhead %d", spoolID, printerID, toolheadID)
 				}
 			}
 		}

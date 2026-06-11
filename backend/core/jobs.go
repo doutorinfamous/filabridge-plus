@@ -1,86 +1,230 @@
 package core
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
 )
 
-// LogPrintUsage logs filament usage for a print job.
-func (b *FilamentBridge) LogPrintUsage(printerName string, toolheadID int, spoolID int, filamentUsed float64, jobName string) error {
-	b.Mutex.Lock()
-	defer b.Mutex.Unlock()
+// Print job statuses.
+const (
+	JobStatusPrinting  = "printing"
+	JobStatusCompleted = "completed"
+	JobStatusCancelled = "cancelled"
+	JobStatusFailed    = "failed"
+)
 
-	// Get print start time from current job file tracking
-	printStarted := time.Now() // Default to now if we can't determine start time
-	if storedJobFile, exists := b.CurrentJobFile[printerName]; exists && storedJobFile != "" {
-		// Rough approximation — ideally tracked precisely when the print starts
-		printStarted = time.Now().Add(-time.Hour)
+// StartPrintJob opens a print job for a printer. It is idempotent: if an open
+// job already exists for the same printer/file it is reused. Any other open
+// jobs for the printer are closed as cancelled (their end was never observed).
+func (b *FilamentBridge) StartPrintJob(printerID, jobName string) (int64, error) {
+	if jobName == "" {
+		return 0, nil
 	}
 
-	_, err := b.DB.Exec(
-		"INSERT INTO print_history (printer_name, toolhead_id, spool_id, filament_used, print_started, print_finished, job_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		printerName, toolheadID, spoolID, filamentUsed, printStarted, time.Now(), jobName,
+	var existingID int64
+	err := b.DB.QueryRow(
+		"SELECT id FROM print_jobs WHERE printer_id = ? AND job_name = ? AND status = ? ORDER BY id DESC LIMIT 1",
+		printerID, jobName, JobStatusPrinting,
+	).Scan(&existingID)
+	if err == nil {
+		return existingID, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to check open print job: %w", err)
+	}
+
+	// Close stale open jobs for this printer (a new print started without us
+	// ever seeing the previous one finish).
+	res, err := b.DB.Exec(
+		"UPDATE print_jobs SET status = ?, finished_at = ? WHERE printer_id = ? AND status = ?",
+		JobStatusCancelled, time.Now(), printerID, JobStatusPrinting,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to log print usage: %w", err)
+		return 0, fmt.Errorf("failed to close stale print jobs: %w", err)
+	}
+	if stale, _ := res.RowsAffected(); stale > 0 {
+		log.Printf("Closed %d stale open print job(s) for %s as cancelled", stale, printerID)
 	}
 
-	return nil
+	insert, err := b.DB.Exec(
+		"INSERT INTO print_jobs (printer_id, job_name, started_at, status) VALUES (?, ?, ?, ?)",
+		printerID, jobName, time.Now(), JobStatusPrinting,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to start print job: %w", err)
+	}
+	jobID, err := insert.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get print job id: %w", err)
+	}
+
+	log.Printf("Started print job %d for %s: %s", jobID, printerID, jobName)
+	return jobID, nil
 }
 
-// IsJobProcessed checks whether a completed job was already processed for filament usage.
+// IsJobProcessed reports whether the most recent job for this printer/file is
+// already closed (filament usage debited). Replaces the old processed_jobs table.
 func (b *FilamentBridge) IsJobProcessed(printerID, filename string) (bool, error) {
 	if filename == "" {
 		return false, nil
 	}
 
-	var count int
+	var status string
 	err := b.DB.QueryRow(
-		"SELECT COUNT(*) FROM processed_jobs WHERE printer_id = ? AND filename = ?",
+		"SELECT status FROM print_jobs WHERE printer_id = ? AND job_name = ? ORDER BY id DESC LIMIT 1",
 		printerID, filename,
-	).Scan(&count)
+	).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("failed to check processed job: %w", err)
 	}
-	return count > 0, nil
+	return status != JobStatusPrinting, nil
 }
 
-// MarkJobProcessed records a job as processed to prevent duplicate filament deductions.
-func (b *FilamentBridge) MarkJobProcessed(printerID, filename string) error {
-	if filename == "" {
+// FinishPrintJob closes the open job for a printer/file with the given status.
+// If no open job exists (start was missed), a closed row is created so the
+// job still counts as processed.
+func (b *FilamentBridge) FinishPrintJob(printerID, jobName, status string) error {
+	if jobName == "" {
 		return nil
 	}
 
-	_, err := b.DB.Exec(
-		"INSERT OR REPLACE INTO processed_jobs (printer_id, filename, processed_at) VALUES (?, ?, ?)",
-		printerID, filename, time.Now(),
+	res, err := b.DB.Exec(
+		"UPDATE print_jobs SET status = ?, finished_at = ? WHERE printer_id = ? AND job_name = ? AND status = ?",
+		status, time.Now(), printerID, jobName, JobStatusPrinting,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to mark job as processed: %w", err)
+		return fmt.Errorf("failed to finish print job: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected > 0 {
+		return nil
+	}
+
+	// No open job — record a closed one so dedup still works.
+	_, err = b.DB.Exec(
+		"INSERT INTO print_jobs (printer_id, job_name, finished_at, status) VALUES (?, ?, ?, ?)",
+		printerID, jobName, time.Now(), status,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to record finished print job: %w", err)
 	}
 	return nil
 }
 
-// ClearProcessedJob removes a processed-job record so the same file can be tracked on reprint.
-func (b *FilamentBridge) ClearProcessedJob(printerID, filename string) error {
-	if filename == "" {
+// FinishLatestOpenJob closes the most recent open job for a printer regardless
+// of file name (used by Bambu webhooks when the job name is unavailable).
+func (b *FilamentBridge) FinishLatestOpenJob(printerID, status string) error {
+	var jobID int64
+	err := b.DB.QueryRow(
+		"SELECT id FROM print_jobs WHERE printer_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+		printerID, JobStatusPrinting,
+	).Scan(&jobID)
+	if err == sql.ErrNoRows {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("failed to find open print job: %w", err)
+	}
 
-	_, err := b.DB.Exec(
-		"DELETE FROM processed_jobs WHERE printer_id = ? AND filename = ?",
-		printerID, filename,
+	_, err = b.DB.Exec(
+		"UPDATE print_jobs SET status = ?, finished_at = ? WHERE id = ?",
+		status, time.Now(), jobID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to clear processed job: %w", err)
+		return fmt.Errorf("failed to finish print job: %w", err)
+	}
+	return nil
+}
+
+// GetOrCreateOpenJob returns the open job for a printer, creating one when
+// needed. When jobName is provided, an open job with the same name is
+// preferred; otherwise the latest open job for the printer is used.
+func (b *FilamentBridge) GetOrCreateOpenJob(printerID, jobName string) (int64, error) {
+	var jobID int64
+	var err error
+	if jobName != "" {
+		err = b.DB.QueryRow(
+			"SELECT id FROM print_jobs WHERE printer_id = ? AND job_name = ? AND status = ? ORDER BY id DESC LIMIT 1",
+			printerID, jobName, JobStatusPrinting,
+		).Scan(&jobID)
+		if err == nil {
+			return jobID, nil
+		}
+		if err != sql.ErrNoRows {
+			return 0, fmt.Errorf("failed to find open print job: %w", err)
+		}
+	}
+
+	// Fall back to any open job for the printer (e.g. usage events arriving
+	// without a job name).
+	err = b.DB.QueryRow(
+		"SELECT id FROM print_jobs WHERE printer_id = ? AND status = ? ORDER BY id DESC LIMIT 1",
+		printerID, JobStatusPrinting,
+	).Scan(&jobID)
+	if err == nil {
+		if jobName != "" {
+			// Backfill the job name when the open job was created without one.
+			if _, updErr := b.DB.Exec(
+				"UPDATE print_jobs SET job_name = ? WHERE id = ? AND job_name = ''",
+				jobName, jobID,
+			); updErr != nil {
+				log.Printf("Warning: failed to backfill job name for job %d: %v", jobID, updErr)
+			}
+		}
+		return jobID, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to find open print job: %w", err)
+	}
+
+	insert, err := b.DB.Exec(
+		"INSERT INTO print_jobs (printer_id, job_name, started_at, status) VALUES (?, ?, ?, ?)",
+		printerID, jobName, time.Now(), JobStatusPrinting,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create print job: %w", err)
+	}
+	return insert.LastInsertId()
+}
+
+// LogToolheadUsage records a filament usage event for a Moonraker toolhead.
+func (b *FilamentBridge) LogToolheadUsage(jobID int64, printerID string, toolheadID, spoolID int, grams float64) error {
+	_, err := b.DB.Exec(
+		"INSERT INTO filament_usage (job_id, printer_id, toolhead_id, spool_id, grams, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+		jobID, printerID, toolheadID, spoolID, grams, time.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to log filament usage: %w", err)
+	}
+	return nil
+}
+
+// LogTrayUsage records a filament usage event for a Bambu AMS tray.
+func (b *FilamentBridge) LogTrayUsage(jobID int64, printerID, trayUniqueID string, spoolID int, grams float64) error {
+	_, err := b.DB.Exec(
+		"INSERT INTO filament_usage (job_id, printer_id, tray_unique_id, spool_id, grams, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+		jobID, printerID, trayUniqueID, spoolID, grams, time.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to log filament usage: %w", err)
 	}
 	return nil
 }
 
 // ProcessFilamentUsage processes filament usage updates for all toolheads.
 // Extruder index from G-code maps directly to FilaBridge toolhead index (no remapping).
-func (b *FilamentBridge) ProcessFilamentUsage(printerName string, filamentUsage map[int]float64, jobName string) error {
+func (b *FilamentBridge) ProcessFilamentUsage(printerID string, filamentUsage map[int]float64, jobName string) error {
+	printerName := b.ResolvePrinterDisplayName(printerID)
+
+	jobID, err := b.GetOrCreateOpenJob(printerID, jobName)
+	if err != nil {
+		log.Printf("Warning: failed to resolve print job for %s (%s): %v", printerName, jobName, err)
+	}
+
 	updatedCount := 0
 	unmappedToolheads := make([]int, 0)
 
@@ -89,7 +233,7 @@ func (b *FilamentBridge) ProcessFilamentUsage(printerName string, filamentUsage 
 			continue
 		}
 
-		spoolID, err := b.GetToolheadMapping(printerName, toolheadID)
+		spoolID, err := b.GetToolheadMapping(printerID, toolheadID)
 		if err != nil {
 			errMsg := fmt.Sprintf("error getting toolhead mapping for %s toolhead %d: %v", printerName, toolheadID, err)
 			log.Print(errMsg)
@@ -111,7 +255,7 @@ func (b *FilamentBridge) ProcessFilamentUsage(printerName string, filamentUsage 
 			continue
 		}
 
-		if err := b.LogPrintUsage(printerName, toolheadID, spoolID, usedWeight, jobName); err != nil {
+		if err := b.LogToolheadUsage(jobID, printerID, toolheadID, spoolID, usedWeight); err != nil {
 			log.Printf("Error logging print usage: %v", err)
 		}
 

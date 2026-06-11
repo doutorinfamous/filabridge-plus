@@ -92,7 +92,9 @@ rest_command:
         "tray_uuid": "{{ filament_tray_uuid }}",
         "used_weight": {{ filament_used_weight | default(0) | round(2) }},
         "color": "{{ filament_color }}",
-        "active_tray_id": "{{ filament_active_tray_id }}"
+        "active_tray_id": "{{ filament_active_tray_id }}",
+        "printer_prefix": "{{ printer_prefix | default('') }}",
+        "job_name": "{{ job_name | default('') }}"
       }
 
   %stray_change:
@@ -108,6 +110,19 @@ rest_command:
         "name": "{{ name }}",
         "material": "{{ material }}",
         "color": "{{ color }}"
+      }
+
+  %sprint_event:
+    url: "%s"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    payload: >
+      {
+        "event": "{{ event_type }}",
+        "printer_prefix": "{{ printer_prefix | default('') }}",
+        "job_name": "{{ job_name | default('') }}",
+        "print_state": "{{ print_state | default('') }}"
       }
 
 template:
@@ -131,6 +146,7 @@ template:
 		prefix,
 		filabridgeEntityPrefix, prefix, prefix, maxComposite,
 		filabridgeEntityPrefix, prefix, prefix, filabridgeEntityPrefix, prefix,
+		filabridgeEntityPrefix, webhookURL,
 		filabridgeEntityPrefix, webhookURL,
 		filabridgeEntityPrefix, webhookURL,
 		prefix, prefix,
@@ -200,6 +216,8 @@ func generateAutomationsYAML(prefix string, allTrays []TrayInfo, webhookURL stri
       material: "{{ state_attr(tray_sensor, 'type') | default('') }}"
       name: "{{ state_attr(tray_sensor, 'name') | default('') }}"
       color: "{{ state_attr(tray_sensor, 'color') | default('') }}"
+      printer_prefix: "%s"
+      job_name: "{{ state_attr('%s', 'subtask_name') | default('', true) }}"
     actions:
       - choose:
           - conditions:
@@ -211,6 +229,12 @@ func generateAutomationsYAML(prefix string, allTrays []TrayInfo, webhookURL stri
                   entity_id: input_number.%s%s_last_tray
                 data:
                   value: "{{ states('sensor.%s%s_active_tray') | int(-1) }}"
+              - action: rest_command.%sprint_event
+                data:
+                  event_type: print_started
+                  printer_prefix: "{{ printer_prefix }}"
+                  job_name: "{{ job_name }}"
+                  print_state: ""
           - conditions:
               - condition: template
                 value_template: "{{ trigger.id == 'tray' }}"
@@ -228,6 +252,8 @@ func generateAutomationsYAML(prefix string, allTrays []TrayInfo, webhookURL stri
                           filament_used_weight: "{{ tray_weight }}"
                           filament_color: "{{ color }}"
                           filament_active_tray_id: "{{ tray_sensor }}"
+                          printer_prefix: "{{ printer_prefix }}"
+                          job_name: "{{ job_name }}"
                       - action: utility_meter.calibrate
                         target:
                           entity_id: sensor.%s%s_filament_usage_meter
@@ -263,11 +289,19 @@ func generateAutomationsYAML(prefix string, allTrays []TrayInfo, webhookURL stri
                           filament_used_weight: "{{ tray_weight }}"
                           filament_color: "{{ color }}"
                           filament_active_tray_id: "{{ tray_sensor }}"
+                          printer_prefix: "{{ printer_prefix }}"
+                          job_name: "{{ job_name }}"
               - action: utility_meter.calibrate
                 target:
                   entity_id: sensor.%s%s_filament_usage_meter
                 data:
                   value: "0"
+              - action: rest_command.%sprint_event
+                data:
+                  event_type: print_finished
+                  printer_prefix: "{{ printer_prefix }}"
+                  job_name: "{{ job_name }}"
+                  print_state: "{{ trigger.to_state.state }}"
     mode: single
 
   - id: 'filabridge_tray_change_%s'
@@ -317,13 +351,17 @@ func generateAutomationsYAML(prefix string, allTrays []TrayInfo, webhookURL stri
 		filabridgeEntityPrefix, prefix, filabridgeEntityPrefix, prefix,
 		trayEntityLookup,
 		filabridgeEntityPrefix, prefix,
+		prefix,
+		printEndEntity,
 		filabridgeEntityPrefix, prefix, filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix,
+		filabridgeEntityPrefix,
 		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix, prefix,
 		filabridgeEntityPrefix,
 		filabridgeEntityPrefix, prefix,
+		filabridgeEntityPrefix,
 		prefix, prefix,
 		trayEntityIDs.String(),
 		trayEntityIDs.String(),

@@ -84,11 +84,15 @@ Formato da location AMS:
 
 | Evento HA | Webhook FilaBridge | Ação |
 |-----------|-------------------|------|
-| Fim de impressão / troca de bandeja | `spool_usage` | Deduz peso do spool atribuído à bandeja ativa |
+| Início de impressão | `print_started` | Abre um job no histórico de impressão (arquivo + impressora) |
+| Fim de impressão / troca de bandeja | `spool_usage` | Deduz peso do spool atribuído à bandeja ativa e registra o consumo no job aberto |
+| Fim de impressão | `print_finished` | Fecha o job no histórico (`finish` = concluída; outro estado = falha) |
 | Troca física de bobina (RFID) | `tray_change` | Auto-atribui spool pelo `extra.tag` aprendido |
 | Bandeja vazia (`name=Empty`) | `tray_change` | Desatribui spool da bandeja |
 
 O mapeamento bobina ↔ bandeja fica no Spoolman em `extra.active_tray` (valor = `unique_id` da entidade HA).
+
+> **Importante:** os eventos `print_started`/`print_finished` e o registro de histórico exigem o package YAML atualizado. Se você instalou o package antes dessa versão, **regenere o HA Config no FilaBridge e substitua o arquivo em `packages/`**, depois reinicie o HA. Com o YAML antigo, o débito no Spoolman continua funcionando, mas o histórico agrupa o consumo em jobs criados automaticamente sem nome de arquivo.
 
 ## 7. Testar
 

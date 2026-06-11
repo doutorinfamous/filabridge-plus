@@ -273,6 +273,36 @@ func buildSpoolNFCURL(host string, spool spoolman.Spool) gin.H {
 	return entry
 }
 
+func buildSpoolmanLocationNFCEntry(host string, location spoolman.Location, bridge *core.FilamentBridge) gin.H {
+	locationParam := location.Name
+	nfcURL := fmt.Sprintf("http://%s/api/nfc/assign?location=%s", host, neturl.QueryEscape(locationParam))
+
+	locationType := "storage"
+	entry := gin.H{
+		"type":          "location",
+		"location_type": locationType,
+		"location_name": location.Name,
+		"display_name":  location.Name,
+		"url":           nfcURL,
+		"is_local_only": false,
+	}
+
+	if printerName, toolheadDisplayName, ok := bridge.ParseVirtualToolheadLocation(location.Name); ok {
+		entry["location_type"] = "toolhead"
+		entry["printer_name"] = printerName
+		entry["toolhead_display_name"] = toolheadDisplayName
+	}
+
+	qrCode, err := qrcode.Encode(nfcURL, qrcode.Medium, 256)
+	if err != nil {
+		log.Printf("Error generating QR code for Spoolman location %s: %v", locationParam, err)
+		entry["qr_code_base64"] = ""
+		return entry
+	}
+	entry["qr_code_base64"] = base64.StdEncoding.EncodeToString(qrCode)
+	return entry
+}
+
 // nfcUrlsHandler returns all available NFC URLs with QR codes.
 func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 	var urls []gin.H
@@ -323,34 +353,7 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			continue
 		}
 
-		locationParam := location.Name
-		nfcURL := fmt.Sprintf("http://%s/api/nfc/assign?location=%s", host, neturl.QueryEscape(locationParam))
-
-		qrCode, err := qrcode.Encode(nfcURL, qrcode.Medium, 256)
-		if err != nil {
-			log.Printf("Error generating QR code for Spoolman location %s: %v", locationParam, err)
-			urls = append(urls, gin.H{
-				"type":           "location",
-				"location_type":  "storage",
-				"location_name":  location.Name,
-				"display_name":   location.Name,
-				"url":            nfcURL,
-				"qr_code_base64": "",
-				"is_local_only":  false,
-			})
-			continue
-		}
-
-		qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCode)
-		urls = append(urls, gin.H{
-			"type":           "location",
-			"location_type":  "storage",
-			"location_name":  location.Name,
-			"display_name":   location.Name,
-			"url":            nfcURL,
-			"qr_code_base64": qrCodeBase64,
-			"is_local_only":  false,
-		})
+		urls = append(urls, buildSpoolmanLocationNFCEntry(host, location, ws.bridge))
 	}
 
 	// Sort URLs: spools first, then locations alphabetically by display name

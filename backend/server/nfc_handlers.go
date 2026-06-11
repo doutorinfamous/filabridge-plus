@@ -232,6 +232,47 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 	})
 }
 
+// normalizeNFCLocationName lowercases and removes spaces for dedup comparisons.
+func normalizeNFCLocationName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "")
+}
+
+func buildSpoolNFCURL(host string, spool spoolman.Spool) gin.H {
+	url := fmt.Sprintf("http://%s/api/nfc/assign?spool=%d", host, spool.ID)
+
+	colorHex := ""
+	if spool.Filament != nil && spool.Filament.ColorHex != "" {
+		colorHex = spool.Filament.ColorHex
+		if !strings.HasPrefix(colorHex, "#") {
+			colorHex = "#" + colorHex
+		}
+	}
+
+	entry := gin.H{
+		"type":             "spool",
+		"spool_id":         spool.ID,
+		"spool_name":       spool.Name,
+		"material":         spool.Material,
+		"brand":            spool.Brand,
+		"color_hex":        colorHex,
+		"remaining_weight": spool.RemainingWeight,
+		"url":              url,
+		"qr_code_base64":   "",
+	}
+	if spool.Filament != nil {
+		entry["filament_id"] = spool.Filament.ID
+		entry["filament_name"] = spool.Filament.Name
+	}
+
+	qrCode, err := qrcode.Encode(url, qrcode.Medium, 256)
+	if err != nil {
+		log.Printf("Error generating QR code for spool %d: %v", spool.ID, err)
+		return entry
+	}
+	entry["qr_code_base64"] = base64.StdEncoding.EncodeToString(qrCode)
+	return entry
+}
+
 // nfcUrlsHandler returns all available NFC URLs with QR codes.
 func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 	var urls []gin.H
@@ -244,107 +285,19 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		return
 	}
 
-	// Generate spool URLs
 	for _, spool := range spools {
-		url := fmt.Sprintf("http://%s/api/nfc/assign?spool=%d", host, spool.ID)
-
-		colorHex := ""
-		if spool.Filament != nil && spool.Filament.ColorHex != "" {
-			colorHex = spool.Filament.ColorHex
-			if !strings.HasPrefix(colorHex, "#") {
-				colorHex = "#" + colorHex
-			}
-		}
-
-		qrCode, err := qrcode.Encode(url, qrcode.Medium, 256)
-		if err != nil {
-			log.Printf("Error generating QR code for spool %d: %v", spool.ID, err)
-			urls = append(urls, gin.H{
-				"type":             "spool",
-				"spool_id":         spool.ID,
-				"spool_name":       spool.Name,
-				"material":         spool.Material,
-				"brand":            spool.Brand,
-				"color_hex":        colorHex,
-				"remaining_weight": spool.RemainingWeight,
-				"url":              url,
-				"qr_code_base64":   "",
-			})
-			continue
-		}
-
-		qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCode)
-		urls = append(urls, gin.H{
-			"type":             "spool",
-			"spool_id":         spool.ID,
-			"spool_name":       spool.Name,
-			"material":         spool.Material,
-			"brand":            spool.Brand,
-			"color_hex":        colorHex,
-			"remaining_weight": spool.RemainingWeight,
-			"url":              url,
-			"qr_code_base64":   qrCodeBase64,
-		})
+		urls = append(urls, buildSpoolNFCURL(host, spool))
 	}
 
-	filaments, err := ws.bridge.Spoolman.GetAllFilaments()
-	if err != nil {
-		log.Printf("Warning: Failed to get filaments for NFC URLs: %v", err)
-		filaments = []spoolman.Filament{}
-	}
-
-	// Generate filament URLs
-	for _, filament := range filaments {
-		url := fmt.Sprintf("%s/filament/show/%d", ws.bridge.Config.SpoolmanURL, filament.ID)
-
-		colorHex := ""
-		if filament.ColorHex != "" {
-			colorHex = filament.ColorHex
-			if !strings.HasPrefix(colorHex, "#") {
-				colorHex = "#" + colorHex
+	// Bambu AMS slot NFC URLs (canonical entries for printer slots)
+	bambuLocationNames := make(map[string]struct{})
+	if bambuURLs, err := bambu.GenerateNFCURLs(ws.bridge, host); err == nil {
+		for _, entry := range bambuURLs {
+			urls = append(urls, entry)
+			if displayName, ok := entry["display_name"].(string); ok {
+				bambuLocationNames[normalizeNFCLocationName(displayName)] = struct{}{}
 			}
 		}
-
-		brand := "Unknown Brand"
-		if filament.Vendor != nil {
-			brand = filament.Vendor.Name
-		}
-
-		qrCode, err := qrcode.Encode(url, qrcode.Medium, 256)
-		if err != nil {
-			log.Printf("Error generating QR code for filament %d: %v", filament.ID, err)
-			urls = append(urls, gin.H{
-				"type":           "filament",
-				"filament_id":    filament.ID,
-				"filament_name":  filament.Name,
-				"material":       filament.Material,
-				"brand":          brand,
-				"color_hex":      colorHex,
-				"extruder_temp":  filament.SettingsExtruderTemp,
-				"bed_temp":       filament.SettingsBedTemp,
-				"diameter":       filament.Diameter,
-				"density":        filament.Density,
-				"url":            url,
-				"qr_code_base64": "",
-			})
-			continue
-		}
-
-		qrCodeBase64 := base64.StdEncoding.EncodeToString(qrCode)
-		urls = append(urls, gin.H{
-			"type":           "filament",
-			"filament_id":    filament.ID,
-			"filament_name":  filament.Name,
-			"material":       filament.Material,
-			"brand":          brand,
-			"color_hex":      colorHex,
-			"extruder_temp":  filament.SettingsExtruderTemp,
-			"bed_temp":       filament.SettingsBedTemp,
-			"diameter":       filament.Diameter,
-			"density":        filament.Density,
-			"url":            url,
-			"qr_code_base64": qrCodeBase64,
-		})
 	}
 
 	spoolmanLocations, err := ws.bridge.Spoolman.GetLocations()
@@ -353,13 +306,20 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		spoolmanLocations = []spoolman.Location{}
 	}
 
-	// Generate location URLs for Spoolman locations only (no virtual printer toolhead locations)
+	// Spoolman storage locations only — skip slots already covered by Bambu entries
 	for _, location := range spoolmanLocations {
 		if location.Archived {
 			continue
 		}
 
 		if strings.TrimSpace(location.Name) == "" {
+			continue
+		}
+
+		if bambu.IsBambuLocation(location.Name) {
+			continue
+		}
+		if _, exists := bambuLocationNames[normalizeNFCLocationName(location.Name)]; exists {
 			continue
 		}
 
@@ -393,32 +353,13 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		})
 	}
 
-	// Bambu AMS slot NFC URLs
-	if bambuURLs, err := bambu.GenerateNFCURLs(ws.bridge, host); err == nil {
-		for _, entry := range bambuURLs {
-			urls = append(urls, entry)
-		}
-	}
-
-	// Sort URLs: filaments first, then spools, then locations alphabetically by display name
+	// Sort URLs: spools first, then locations alphabetically by display name
 	sort.Slice(urls, func(i, j int) bool {
 		typeI := urls[i]["type"].(string)
 		typeJ := urls[j]["type"].(string)
 
 		if typeI != typeJ {
-			if typeI == "filament" {
-				return true
-			}
-			if typeJ == "filament" {
-				return false
-			}
-			if typeI == "spool" {
-				return true
-			}
-			if typeJ == "spool" {
-				return false
-			}
-			return true
+			return typeI == "spool"
 		}
 
 		if typeI == "location" {
@@ -427,33 +368,23 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			return strings.ToLower(displayNameI) < strings.ToLower(displayNameJ)
 		}
 
-		if typeI == "filament" {
-			idI := urls[i]["filament_id"].(int)
-			idJ := urls[j]["filament_id"].(int)
-			return idI < idJ
+		materialI := urls[i]["material"].(string)
+		materialJ := urls[j]["material"].(string)
+		brandI := urls[i]["brand"].(string)
+		brandJ := urls[j]["brand"].(string)
+		nameI := urls[i]["spool_name"].(string)
+		nameJ := urls[j]["spool_name"].(string)
+
+		displayNameI := fmt.Sprintf("%s - %s - %s", materialI, brandI, nameI)
+		displayNameJ := fmt.Sprintf("%s - %s - %s", materialJ, brandJ, nameJ)
+
+		if displayNameI != displayNameJ {
+			return displayNameI < displayNameJ
 		}
 
-		if typeI == "spool" {
-			materialI := urls[i]["material"].(string)
-			materialJ := urls[j]["material"].(string)
-			brandI := urls[i]["brand"].(string)
-			brandJ := urls[j]["brand"].(string)
-			nameI := urls[i]["spool_name"].(string)
-			nameJ := urls[j]["spool_name"].(string)
-
-			displayNameI := fmt.Sprintf("%s - %s - %s", materialI, brandI, nameI)
-			displayNameJ := fmt.Sprintf("%s - %s - %s", materialJ, brandJ, nameJ)
-
-			if displayNameI != displayNameJ {
-				return displayNameI < displayNameJ
-			}
-
-			weightI := urls[i]["remaining_weight"].(float64)
-			weightJ := urls[j]["remaining_weight"].(float64)
-			return weightI < weightJ
-		}
-
-		return false
+		weightI := urls[i]["remaining_weight"].(float64)
+		weightJ := urls[j]["remaining_weight"].(float64)
+		return weightI < weightJ
 	})
 
 	spoolmanURL := ws.bridge.Spoolman.GetBaseURL()

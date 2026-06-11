@@ -123,20 +123,15 @@ export interface BambuPrinter {
 }
 
 export interface NfcUrlEntry {
-  type: "spool" | "filament" | "location";
+  type: "spool" | "location";
   url: string;
   qr_code_base64: string;
   // spool
   spool_id?: number;
   spool_name?: string;
   remaining_weight?: number;
-  // filament
   filament_id?: number;
   filament_name?: string;
-  extruder_temp?: number;
-  bed_temp?: number;
-  diameter?: number;
-  density?: number;
   // shared
   material?: string;
   brand?: string;

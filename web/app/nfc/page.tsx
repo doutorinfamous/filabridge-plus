@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy, MapPin, Nfc, Palette, Search, Tag } from "lucide-react";
+import { Check, Copy, ExternalLink, MapPin, Nfc, Search, Tag } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
@@ -14,14 +14,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-type NfcTab = "spool" | "filament" | "location";
+type NfcTab = "spool" | "location";
 
 function entryTitle(entry: NfcUrlEntry): string {
   if (entry.type === "spool") {
     return `[${entry.spool_id}] ${entry.spool_name || "Spool sem nome"}`;
-  }
-  if (entry.type === "filament") {
-    return `[${entry.filament_id}] ${entry.filament_name || "Filamento"}`;
   }
   return entry.display_name || entry.location_name || "Local";
 }
@@ -34,12 +31,13 @@ function entrySubtitle(entry: NfcUrlEntry): string {
         : "";
     return `${entry.material || "?"} · ${entry.brand || "?"}${weight}`;
   }
-  if (entry.type === "filament") {
-    return `${entry.material || "?"} · ${entry.brand || "?"}`;
-  }
   return entry.location_type === "ams_slot"
     ? "Slot AMS (Bambu)"
     : "Local de armazenamento";
+}
+
+function entryKey(entry: NfcUrlEntry): string {
+  return `${entry.type}-${entry.spool_id ?? entry.display_name ?? entry.location_name ?? entry.url}`;
 }
 
 function ColorDot({ hex }: { hex?: string }) {
@@ -54,6 +52,7 @@ function ColorDot({ hex }: { hex?: string }) {
 
 export default function NfcPage() {
   const [entries, setEntries] = React.useState<NfcUrlEntry[] | null>(null);
+  const [spoolmanUrl, setSpoolmanUrl] = React.useState("");
   const [tab, setTab] = React.useState<NfcTab>("spool");
   const [search, setSearch] = React.useState("");
   const [selected, setSelected] = React.useState<NfcUrlEntry | null>(null);
@@ -62,7 +61,10 @@ export default function NfcPage() {
   React.useEffect(() => {
     api
       .getNfcUrls()
-      .then((res) => setEntries(res.urls ?? []))
+      .then((res) => {
+        setEntries(res.urls ?? []);
+        setSpoolmanUrl((res.spoolman_url ?? "").replace(/\/$/, ""));
+      })
       .catch((error) => {
         setEntries([]);
         toast.error(
@@ -71,12 +73,15 @@ export default function NfcPage() {
       });
   }, []);
 
-  const filtered = (entries ?? []).filter((entry) => {
-    if (entry.type !== tab) return false;
-    if (!search.trim()) return true;
-    const haystack = `${entryTitle(entry)} ${entrySubtitle(entry)}`.toLowerCase();
-    return haystack.includes(search.trim().toLowerCase());
-  });
+  const filtered = React.useMemo(() => {
+    return (entries ?? []).filter((entry) => {
+      if (entry.type !== tab) return false;
+      if (!search.trim()) return true;
+      const haystack =
+        `${entryTitle(entry)} ${entrySubtitle(entry)}`.toLowerCase();
+      return haystack.includes(search.trim().toLowerCase());
+    });
+  }, [entries, tab, search]);
 
   const copyUrl = async (url: string) => {
     try {
@@ -95,13 +100,19 @@ export default function NfcPage() {
     setSearch("");
   };
 
+  const filamentUrl =
+    selected?.type === "spool" &&
+    selected.filament_id != null &&
+    spoolmanUrl
+      ? `${spoolmanUrl}/filament/show/${selected.filament_id}`
+      : null;
+
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">NFC & QR</h1>
         <p className="text-sm text-muted-foreground">
-          Gere URLs e QR codes para programar tags NFC de spools, filamentos e
-          locais
+          Gere URLs e QR codes para programar tags NFC de spools e locais
         </p>
       </header>
 
@@ -109,9 +120,6 @@ export default function NfcPage() {
         <TabsList>
           <TabsTrigger value="spool">
             <Tag className="size-4" /> Spools
-          </TabsTrigger>
-          <TabsTrigger value="filament">
-            <Palette className="size-4" /> Filamentos
           </TabsTrigger>
           <TabsTrigger value="location">
             <MapPin className="size-4" /> Locais
@@ -144,12 +152,13 @@ export default function NfcPage() {
                   Nada encontrado.
                 </p>
               ) : (
-                <div className="space-y-1">
+                <div key={tab} className="space-y-1">
                   {filtered.map((entry) => {
                     const isSelected = selected?.url === entry.url;
                     return (
                       <button
-                        key={entry.url}
+                        type="button"
+                        key={entryKey(entry)}
                         onClick={() => setSelected(entry)}
                         className={cn(
                           "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
@@ -224,10 +233,24 @@ export default function NfcPage() {
                 </div>
                 <ol className="max-w-md list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
                   <li>Abra o NFC Tools Pro no celular</li>
-                  <li>Toque em &quot;Escrever&quot; → &quot;Adicionar registro&quot; → URL</li>
+                  <li>
+                    Toque em &quot;Escrever&quot; → &quot;Adicionar registro&quot; →
+                    URL
+                  </li>
                   <li>Escaneie este QR code (ou cole a URL)</li>
                   <li>Grave a tag NFC e teste com o celular</li>
                 </ol>
+                {filamentUrl ? (
+                  <a
+                    href={filamentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    Ver filamento no Spoolman
+                    <ExternalLink className="size-3" />
+                  </a>
+                ) : null}
               </>
             ) : (
               <div className="text-center text-muted-foreground">

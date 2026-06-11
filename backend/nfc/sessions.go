@@ -28,6 +28,21 @@ type Session struct {
 	HasLocation       bool      `json:"has_location"`
 }
 
+// hasLocationSet reports whether enough location fields are present for a session step.
+// Moonraker toolheads set printerName; Bambu AMS slots set locationName only.
+func hasLocationSet(isPrinterLocation bool, printerName string, toolheadID int, locationName string) bool {
+	if locationName == "" {
+		return false
+	}
+	if !isPrinterLocation {
+		return true
+	}
+	if printerName != "" {
+		return toolheadID >= 0
+	}
+	return true
+}
+
 // ParseLocationParam extracts location information from a location parameter.
 // Supports multiple formats:
 // 1. "PrinterName - Toolhead N" - printer toolhead locations (numeric ID)
@@ -144,7 +159,7 @@ func CreateOrUpdateSession(b *core.FilamentBridge, sessionID string, spoolID int
 			}
 		}
 
-		if (isPrinterLocation && printerName != "" && toolheadID >= 0) || (!isPrinterLocation && locationName != "") {
+		if hasLocationSet(isPrinterLocation, printerName, toolheadID, locationName) {
 			existingSession.PrinterName = printerName
 			existingSession.ToolheadID = toolheadID
 			existingSession.LocationName = locationName
@@ -162,8 +177,12 @@ func CreateOrUpdateSession(b *core.FilamentBridge, sessionID string, spoolID int
 
 		// Recalculate flags based on current session data
 		existingSession.HasSpool = existingSession.SpoolID > 0
-		existingSession.HasLocation = (existingSession.IsPrinterLocation && existingSession.PrinterName != "" && existingSession.ToolheadID >= 0) ||
-			(!existingSession.IsPrinterLocation && existingSession.LocationName != "")
+		existingSession.HasLocation = hasLocationSet(
+			existingSession.IsPrinterLocation,
+			existingSession.PrinterName,
+			existingSession.ToolheadID,
+			existingSession.LocationName,
+		)
 
 		return &existingSession, nil
 	}
@@ -185,8 +204,8 @@ func createNewSession(b *core.FilamentBridge, sessionID string, spoolID int, pri
 		IsPrinterLocation: isPrinterLocation,
 		CreatedAt:         now,
 		ExpiresAt:         expiresAt,
-		HasSpool:          spoolID > 0,
-		HasLocation:       (isPrinterLocation && printerName != "" && toolheadID >= 0) || (!isPrinterLocation && locationName != ""),
+		HasSpool:    spoolID > 0,
+		HasLocation: hasLocationSet(isPrinterLocation, printerName, toolheadID, locationName),
 	}
 
 	_, err := b.DB.Exec(
@@ -219,7 +238,12 @@ func GetSession(b *core.FilamentBridge, sessionID string) (*Session, error) {
 	}
 
 	session.HasSpool = session.SpoolID > 0
-	session.HasLocation = (session.IsPrinterLocation && session.PrinterName != "" && session.ToolheadID >= 0) || (!session.IsPrinterLocation && session.LocationName != "")
+	session.HasLocation = hasLocationSet(
+		session.IsPrinterLocation,
+		session.PrinterName,
+		session.ToolheadID,
+		session.LocationName,
+	)
 
 	return &session, nil
 }

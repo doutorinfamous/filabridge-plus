@@ -95,7 +95,9 @@ func GenerateNFCURLs(b *core.FilamentBridge, baseURL string) ([]map[string]inter
 		}
 		for _, tray := range trays {
 			locationParam := tray.DisplayName
-			if locationParam == "" {
+			if cfg.Name != "" {
+				locationParam = FormatTrayDisplayName(cfg.Name, tray.AMSNumber, tray.TrayNumber, tray.IsExternal)
+			} else if locationParam == "" {
 				locationParam = FormatTrayDisplayName(cfg.Name, tray.AMSNumber, tray.TrayNumber, tray.IsExternal)
 			}
 			nfcURL := fmt.Sprintf("%s/api/nfc/assign?location=%s", baseURL, url.QueryEscape(locationParam))

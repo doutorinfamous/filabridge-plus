@@ -183,7 +183,16 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 		details := []nfcPageDetail{
 			{Label: "Spool ID", Value: strconv.Itoa(session.SpoolID)},
 		}
-		if session.IsPrinterLocation && session.PrinterName != "" {
+		if bambu.IsBambuLocation(session.LocationName) {
+			if idx := strings.Index(session.LocationName, " - "); idx >= 0 {
+				details = append(details,
+					nfcPageDetail{Label: "Printer", Value: session.LocationName[:idx]},
+					nfcPageDetail{Label: "Slot", Value: strings.TrimSpace(session.LocationName[idx+3:])},
+				)
+			} else {
+				details = append(details, nfcPageDetail{Label: "Location", Value: session.LocationName})
+			}
+		} else if session.IsPrinterLocation && session.PrinterName != "" {
 			details = append(details,
 				nfcPageDetail{Label: "Printer", Value: session.PrinterName},
 				nfcPageDetail{Label: "Toolhead", Value: toolheadDisplayName},

@@ -16,9 +16,26 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type NfcTab = "spool" | "location";
 
+function bambuPrinterName(entry: NfcUrlEntry): string {
+  if (entry.printer_name?.trim()) return entry.printer_name.trim();
+  const name = entry.display_name || entry.location_name || "";
+  const idx = name.indexOf(" - ");
+  return idx >= 0 ? name.slice(0, idx).trim() : "";
+}
+
+function bambuSlotLabel(entry: NfcUrlEntry): string {
+  const name = entry.display_name || entry.location_name || "";
+  const idx = name.indexOf(" - ");
+  if (idx >= 0) return name.slice(idx + 3).trim();
+  return name || "Slot AMS";
+}
+
 function entryTitle(entry: NfcUrlEntry): string {
   if (entry.type === "spool") {
     return `[${entry.spool_id}] ${entry.spool_name || "Spool sem nome"}`;
+  }
+  if (entry.location_type === "ams_slot") {
+    return bambuSlotLabel(entry);
   }
   return entry.display_name || entry.location_name || "Local";
 }
@@ -31,11 +48,13 @@ function entrySubtitle(entry: NfcUrlEntry): string {
         : "";
     return `${entry.material || "?"} · ${entry.brand || "?"}${weight}`;
   }
-  return entry.location_type === "ams_slot"
-    ? "Slot AMS (Bambu)"
-    : entry.location_type === "toolhead"
-      ? "Toolhead da impressora"
-      : "Local de armazenamento";
+  if (entry.location_type === "ams_slot") {
+    const printer = bambuPrinterName(entry);
+    return printer ? `${printer} · Bambu AMS` : "Slot AMS (Bambu)";
+  }
+  return entry.location_type === "toolhead"
+    ? "Toolhead da impressora"
+    : "Local de armazenamento";
 }
 
 function entryKey(entry: NfcUrlEntry): string {
@@ -80,7 +99,7 @@ export default function NfcPage() {
       if (entry.type !== tab) return false;
       if (!search.trim()) return true;
       const haystack =
-        `${entryTitle(entry)} ${entrySubtitle(entry)}`.toLowerCase();
+        `${entryTitle(entry)} ${entrySubtitle(entry)} ${entry.printer_name ?? ""} ${entry.display_name ?? ""}`.toLowerCase();
       return haystack.includes(search.trim().toLowerCase());
     });
   }, [entries, tab, search]);

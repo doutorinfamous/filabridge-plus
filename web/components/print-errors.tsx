@@ -45,14 +45,14 @@ export function PrintErrors({
           <AlertTitle>
             Falha ao processar impressão — {err.printer_name}
           </AlertTitle>
-          <AlertDescription className="space-y-2">
-            <p>
+          <AlertDescription className="space-y-2 break-words">
+            <p className="break-words">
               <span className="font-medium">Arquivo:</span> {err.filename}
               <span className="px-2 text-muted-foreground">·</span>
               <span className="font-medium">Quando:</span>{" "}
               {new Date(err.timestamp).toLocaleString()}
             </p>
-            <p>{err.error}</p>
+            <p className="break-words">{err.error}</p>
             <p className="text-xs">
               Atualize o Spoolman manualmente com o uso correto de filamento
               desta impressão.

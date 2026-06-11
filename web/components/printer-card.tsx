@@ -62,23 +62,23 @@ export function PrinterCard({
   };
 
   return (
-    <Card className="border-border/70 bg-card/60">
+    <Card className="min-w-0 border-border/70 bg-card/60">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl border border-border/70 bg-background/60">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-background/60">
             <Printer className="size-5 text-muted-foreground" />
           </div>
-          <div>
-            <CardTitle className="text-base">{data?.name ?? printerName}</CardTitle>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="truncate text-base">{data?.name ?? printerName}</CardTitle>
             <CardDescription>
-              {config.model || "Moonraker"} ·{" "}
-              {config.toolheads === 1
-                ? "1 toolhead"
-                : `${config.toolheads} toolheads`}
+              {config.model || "Snapmaker U1"} · Moonraker
+              {config.toolheads > 1
+                ? ` · ${config.toolheads} toolheads`
+                : ""}
             </CardDescription>
           </div>
         </div>
-        <PrinterStateBadge state={data?.state} />
+        <PrinterStateBadge state={data?.state} className="shrink-0" />
       </CardHeader>
       <CardContent className="space-y-4">
         {data && <PrintJobSection data={data} />}
@@ -93,11 +93,14 @@ export function PrinterCard({
             const label =
               mapping?.display_name || `Toolhead ${toolheadId + 1}`;
             return (
-              <div key={toolheadId} className="flex items-center gap-2">
-                <span className="w-28 shrink-0 truncate text-sm text-muted-foreground">
+              <div
+                key={toolheadId}
+                className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2"
+              >
+                <span className="truncate text-sm text-muted-foreground sm:w-28 sm:shrink-0">
                   {label}
                 </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 w-full sm:flex-1">
                   <SpoolSelect
                     currentSpool={current}
                     loadAvailable={async () => {

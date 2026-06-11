@@ -11,9 +11,13 @@ interface StatusSocketState {
   refresh: () => void;
 }
 
-// Live status via /ws/status (proxied by Next). Falls back to HTTP polling
-// when the WebSocket cannot be established.
-export function useStatusSocket(): StatusSocketState {
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+
+// Live status via /ws/status (proxied by Next), with HTTP polling at poll_interval
+// to keep the UI in sync even when broadcasts are missed.
+export function useStatusSocket(
+  pollIntervalMs: number = DEFAULT_POLL_INTERVAL_MS
+): StatusSocketState {
   const [status, setStatus] = useState<StatusMessage | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -42,10 +46,11 @@ export function useStatusSocket(): StatusSocketState {
   useEffect(() => {
     let closed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
 
     // Initial snapshot so the UI renders before the first broadcast.
     const initialTimer = setTimeout(fetchSnapshot, 0);
+
+    const pollTimer = setInterval(fetchSnapshot, pollIntervalMs);
 
     const connect = () => {
       if (closed) return;
@@ -56,10 +61,6 @@ export function useStatusSocket(): StatusSocketState {
       ws.onopen = () => {
         retryRef.current = 0;
         setConnected(true);
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = undefined;
-        }
       };
 
       ws.onmessage = (event) => {
@@ -80,10 +81,6 @@ export function useStatusSocket(): StatusSocketState {
         setConnected(false);
         if (closed) return;
         retryRef.current += 1;
-        // After repeated failures, poll over HTTP while retrying the socket.
-        if (retryRef.current >= 3 && !pollTimer) {
-          pollTimer = setInterval(fetchSnapshot, 15000);
-        }
         const delay = Math.min(15000, 1000 * 2 ** Math.min(retryRef.current, 4));
         reconnectTimer = setTimeout(connect, delay);
       };
@@ -98,11 +95,11 @@ export function useStatusSocket(): StatusSocketState {
     return () => {
       closed = true;
       clearTimeout(initialTimer);
+      clearInterval(pollTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (pollTimer) clearInterval(pollTimer);
       wsRef.current?.close();
     };
-  }, [fetchSnapshot]);
+  }, [fetchSnapshot, pollIntervalMs]);
 
   return { status, connected, refresh: fetchSnapshot };
 }

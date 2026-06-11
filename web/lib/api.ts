@@ -211,11 +211,12 @@ export function spoolLabel(spool: Spool): string {
   const material = spool.material || "Material desconhecido";
   const brand = spool.brand || "Marca desconhecida";
   const name = spool.name || "Sem nome";
-  const weight =
-    spool.remaining_weight != null
-      ? ` · ${Math.round(spool.remaining_weight)}g`
-      : "";
-  return `[${spool.id}] ${material} · ${brand} · ${name}${weight}`;
+  return `[${spool.id}] ${material} · ${brand} · ${name}`;
+}
+
+export function formatRemainingWeight(spool: Spool): string | null {
+  if (spool.remaining_weight == null) return null;
+  return `${Math.round(spool.remaining_weight)}g`;
 }
 
 export function spoolColor(spool: Spool | null | undefined): string {

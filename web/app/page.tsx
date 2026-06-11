@@ -6,6 +6,7 @@ import { CloudOff, PlugZap, Printer, Wifi, WifiOff } from "lucide-react";
 
 import { api } from "@/lib/api";
 import type { BambuPrinter, PrinterConfigInfo } from "@/lib/types";
+import { usePollInterval } from "@/lib/use-poll-interval";
 import { useStatusSocket } from "@/lib/use-status-socket";
 import {
   Alert,
@@ -27,7 +28,8 @@ import { PrintErrors } from "@/components/print-errors";
 import { PrinterCard } from "@/components/printer-card";
 
 export default function DashboardPage() {
-  const { status, connected, refresh } = useStatusSocket();
+  const { intervalMs } = usePollInterval();
+  const { status, connected, refresh } = useStatusSocket(intervalMs);
 
   const [printers, setPrinters] = React.useState<Record<
     string,
@@ -73,13 +75,13 @@ export default function DashboardPage() {
         )
         .catch(() => undefined);
     }, 0);
-    const timer = setInterval(loadBambu, 30000);
+    const timer = setInterval(loadBambu, intervalMs);
 
     return () => {
       clearTimeout(initialTimer);
       clearInterval(timer);
     };
-  }, [loadPrinters, loadBambu]);
+  }, [loadPrinters, loadBambu, intervalMs]);
 
   const moonrakerEntries = Object.entries(printers ?? {}).filter(
     ([id, cfg]) => id !== "no_printers" && cfg.driver !== "bambu_ha"
@@ -95,7 +97,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
@@ -140,7 +142,7 @@ export default function DashboardPage() {
       <PrintErrors errors={printErrors} onChanged={onChanged} />
 
       {printers === null ? (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid min-w-0 gap-4 md:grid-cols-2">
           <Skeleton className="h-64 rounded-xl" />
           <Skeleton className="h-64 rounded-xl" />
         </div>
@@ -167,53 +169,33 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-8">
-          {moonrakerEntries.length > 0 && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                Snapmaker / Moonraker
-              </h2>
-              <div className="grid gap-4 lg:grid-cols-2">
-                {moonrakerEntries.map(([printerId, cfg]) => (
-                  <PrinterCard
-                    key={printerId}
-                    printerId={printerId}
-                    config={cfg}
-                    data={status?.printers?.[printerId]}
-                    mappings={status?.toolhead_mappings?.[printerId]}
-                    spools={spools}
-                    spoolmanUrl={spoolmanUrl}
-                    onChanged={onChanged}
-                  />
-                ))}
-              </div>
-            </section>
+        <div className="space-y-4">
+          {bambuError && bambuPrinters.length === 0 && (
+            <p className="text-sm text-muted-foreground">Bambu: {bambuError}</p>
           )}
-
-          {(bambuPrinters.length > 0 || bambuError) && (
-            <section className="space-y-3">
-              <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                Bambu Lab (Home Assistant)
-              </h2>
-              {bambuError && bambuPrinters.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Bambu: {bambuError}
-                </p>
-              ) : (
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {bambuPrinters.map((printer) => (
-                    <BambuPrinterCard
-                      key={printer.printer_id ?? printer.device_id}
-                      printer={printer}
-                      spools={spools}
-                      spoolmanUrl={spoolmanUrl}
-                      onChanged={onChanged}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
+          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+            {moonrakerEntries.map(([printerId, cfg]) => (
+              <PrinterCard
+                key={printerId}
+                printerId={printerId}
+                config={cfg}
+                data={status?.printers?.[printerId]}
+                mappings={status?.toolhead_mappings?.[printerId]}
+                spools={spools}
+                spoolmanUrl={spoolmanUrl}
+                onChanged={onChanged}
+              />
+            ))}
+            {bambuPrinters.map((printer) => (
+              <BambuPrinterCard
+                key={printer.printer_id ?? printer.device_id}
+                printer={printer}
+                spools={spools}
+                spoolmanUrl={spoolmanUrl}
+                onChanged={onChanged}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

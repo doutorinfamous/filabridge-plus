@@ -3,9 +3,14 @@
 import * as React from "react";
 import { Check, ChevronsUpDown, CircleOff, Loader2 } from "lucide-react";
 
-import { spoolColor, spoolLabel } from "@/lib/api";
+import {
+  formatRemainingWeight,
+  spoolColor,
+  spoolLabel,
+} from "@/lib/api";
 import type { Spool } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -36,6 +41,29 @@ export function SpoolDot({
       )}
       style={{ backgroundColor: color }}
     />
+  );
+}
+
+export function SpoolWeightBadge({
+  spool,
+  className,
+}: {
+  spool: Spool;
+  className?: string;
+}) {
+  const weight = formatRemainingWeight(spool);
+  if (!weight) return null;
+
+  return (
+    <Badge
+      variant="secondary"
+      className={cn(
+        "shrink-0 rounded-full px-2 py-0 text-[11px] font-medium tabular-nums",
+        className
+      )}
+    >
+      {weight}
+    </Badge>
   );
 }
 
@@ -93,6 +121,11 @@ export function SpoolSelect({
     }
   };
 
+  const spoolSearchValue = (spool: Spool) => {
+    const weight = formatRemainingWeight(spool);
+    return `${spool.id} ${spoolLabel(spool)}${weight ? ` ${weight}` : ""}`;
+  };
+
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -101,9 +134,9 @@ export function SpoolSelect({
           role="combobox"
           aria-expanded={open}
           disabled={disabled || saving}
-          className="h-9 w-full justify-between bg-background/40 font-normal"
+          className="h-9 w-full justify-between gap-2 bg-background/40 font-normal"
         >
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 flex-1 items-center gap-2">
             {currentSpool ? (
               <>
                 <SpoolDot color={spoolColor(currentSpool)} />
@@ -118,11 +151,14 @@ export function SpoolSelect({
               </>
             )}
           </span>
-          {saving ? (
-            <Loader2 className="size-4 shrink-0 animate-spin opacity-50" />
-          ) : (
-            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
-          )}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {currentSpool && <SpoolWeightBadge spool={currentSpool} />}
+            {saving ? (
+              <Loader2 className="size-4 animate-spin opacity-50" />
+            ) : (
+              <ChevronsUpDown className="size-4 opacity-50" />
+            )}
+          </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -144,13 +180,16 @@ export function SpoolSelect({
               {options.map((spool) => (
                 <CommandItem
                   key={spool.id}
-                  value={`${spool.id} ${spoolLabel(spool)}`}
+                  value={spoolSearchValue(spool)}
                   onSelect={() => pick(spool.id)}
                 >
                   <SpoolDot color={spoolColor(spool)} />
-                  <span className="truncate">{spoolLabel(spool)}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {spoolLabel(spool)}
+                  </span>
+                  <SpoolWeightBadge spool={spool} />
                   {currentSpool?.id === spool.id && (
-                    <Check className="ml-auto size-4" />
+                    <Check className="size-4 shrink-0" />
                   )}
                 </CommandItem>
               ))}

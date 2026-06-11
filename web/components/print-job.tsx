@@ -8,7 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
-export function PrinterStateBadge({ state }: { state?: string }) {
+export function PrinterStateBadge({
+  state,
+  className,
+}: {
+  state?: string;
+  className?: string;
+}) {
   const normalized = (state ?? "idle").toLowerCase();
   const styles: Record<string, string> = {
     printing: "bg-success/15 text-success border-success/30",
@@ -23,7 +29,8 @@ export function PrinterStateBadge({ state }: { state?: string }) {
       variant="outline"
       className={cn(
         "uppercase tracking-wide",
-        styles[normalized] ?? styles.idle
+        styles[normalized] ?? styles.idle,
+        className
       )}
     >
       <span
@@ -48,16 +55,18 @@ export function PrintJobSection({ data }: { data: PrinterData }) {
   const pct = progressPercent(data.progress);
 
   return (
-    <div className="space-y-2 rounded-lg border border-border/60 bg-background/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-sm font-medium">
+    <div className="min-w-0 space-y-2 overflow-hidden rounded-lg border border-border/60 bg-background/40 p-3">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">
           {data.job_name || "Trabalho em andamento"}
         </p>
         <span className="shrink-0 text-sm font-semibold tabular-nums">
           {pct.toFixed(1)}%
         </span>
       </div>
-      <Progress value={pct} className="h-1.5" />
+      <div className="min-w-0">
+        <Progress value={pct} className="h-1.5" />
+      </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="flex items-center gap-1">
           <Clock className="size-3" />

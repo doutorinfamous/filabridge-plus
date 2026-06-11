@@ -61,11 +61,14 @@ export function BambuPrinterCard({
   const renderTrayRow = (tray: BambuTray, amsName?: string) => {
     const current = findSpool(tray.assigned_spool_id);
     return (
-      <div key={tray.unique_id} className="flex items-center gap-2">
-        <span className="w-28 shrink-0 truncate text-sm text-muted-foreground">
+      <div
+        key={tray.unique_id}
+        className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2"
+      >
+        <span className="truncate text-sm text-muted-foreground sm:w-28 sm:shrink-0">
           {trayLabel(tray, amsName)}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 w-full sm:flex-1">
           <SpoolSelect
             currentSpool={current}
             loadAvailable={async () => {
@@ -103,18 +106,18 @@ export function BambuPrinterCard({
   const hasTrays = amsUnits.length > 0 || externalSpools.length > 0;
 
   return (
-    <Card className="border-border/70 bg-card/60">
+    <Card className="min-w-0 border-border/70 bg-card/60">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10">
             <Boxes className="size-5 text-emerald-400" />
           </div>
-          <div>
-            <CardTitle className="text-base">{printer.name}</CardTitle>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="truncate text-base">{printer.name}</CardTitle>
             <CardDescription>Bambu Lab · Home Assistant</CardDescription>
           </div>
         </div>
-        <PrinterStateBadge state={printer.state} />
+        <PrinterStateBadge state={printer.state} className="shrink-0" />
       </CardHeader>
       <CardContent className="space-y-4">
         <PrintJobSection

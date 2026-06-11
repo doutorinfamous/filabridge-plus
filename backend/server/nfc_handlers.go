@@ -237,8 +237,8 @@ func normalizeNFCLocationName(name string) string {
 	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), " ", "")
 }
 
-func buildSpoolNFCURL(host string, spool spoolman.Spool) gin.H {
-	url := fmt.Sprintf("http://%s/api/nfc/assign?spool=%d", host, spool.ID)
+func buildSpoolNFCURL(baseURL string, spool spoolman.Spool) gin.H {
+	url := fmt.Sprintf("%s/api/nfc/assign?spool=%d", baseURL, spool.ID)
 
 	colorHex := ""
 	if spool.Filament != nil && spool.Filament.ColorHex != "" {
@@ -273,9 +273,9 @@ func buildSpoolNFCURL(host string, spool spoolman.Spool) gin.H {
 	return entry
 }
 
-func buildSpoolmanLocationNFCEntry(host string, location spoolman.Location, bridge *core.FilamentBridge) gin.H {
+func buildSpoolmanLocationNFCEntry(baseURL string, location spoolman.Location, bridge *core.FilamentBridge) gin.H {
 	locationParam := location.Name
-	nfcURL := fmt.Sprintf("http://%s/api/nfc/assign?location=%s", host, neturl.QueryEscape(locationParam))
+	nfcURL := fmt.Sprintf("%s/api/nfc/assign?location=%s", baseURL, neturl.QueryEscape(locationParam))
 
 	locationType := "storage"
 	entry := gin.H{
@@ -307,7 +307,7 @@ func buildSpoolmanLocationNFCEntry(host string, location spoolman.Location, brid
 func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 	var urls []gin.H
 
-	host := requestHost(c)
+	baseURL := nfcBaseURL(ws.bridge, c)
 
 	spools, err := ws.bridge.Spoolman.GetAllSpools()
 	if err != nil {
@@ -316,12 +316,12 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 	}
 
 	for _, spool := range spools {
-		urls = append(urls, buildSpoolNFCURL(host, spool))
+		urls = append(urls, buildSpoolNFCURL(baseURL, spool))
 	}
 
 	// Bambu AMS slot NFC URLs (canonical entries for printer slots)
 	bambuLocationNames := make(map[string]struct{})
-	if bambuURLs, err := bambu.GenerateNFCURLs(ws.bridge, host); err == nil {
+	if bambuURLs, err := bambu.GenerateNFCURLs(ws.bridge, baseURL); err == nil {
 		for _, entry := range bambuURLs {
 			urls = append(urls, entry)
 			if displayName, ok := entry["display_name"].(string); ok {
@@ -353,7 +353,7 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			continue
 		}
 
-		urls = append(urls, buildSpoolmanLocationNFCEntry(host, location, ws.bridge))
+		urls = append(urls, buildSpoolmanLocationNFCEntry(baseURL, location, ws.bridge))
 	}
 
 	// Sort URLs: spools first, then locations alphabetically by display name

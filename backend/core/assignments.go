@@ -149,6 +149,42 @@ func (b *FilamentBridge) ensureSpoolNotAssignedElsewhere(spoolID int, exclude Ex
 	return nil
 }
 
+// RelocateSpoolFromPreviousAssignments clears Moonraker toolhead and Bambu tray
+// bindings for spoolID before a new explicit assignment. The keep target is
+// excluded from clearing.
+func (b *FilamentBridge) RelocateSpoolFromPreviousAssignments(spoolID int, keep ExcludeAssignment) error {
+	allMappings, err := b.GetAllToolheadMappings()
+	if err != nil {
+		return fmt.Errorf("failed to get toolhead mappings: %w", err)
+	}
+
+	for printerID, printerMappings := range allMappings {
+		for toolheadID, mapping := range printerMappings {
+			if mapping.SpoolID != spoolID {
+				continue
+			}
+			if keep.PrinterID != "" && printerID == keep.PrinterID && toolheadID == keep.ToolheadID {
+				continue
+			}
+			if err := b.UnmapToolhead(printerID, toolheadID); err != nil {
+				log.Printf("Warning: Failed to unmap spool %d from %s toolhead %d during relocation: %v", spoolID, printerID, toolheadID, err)
+			}
+		}
+	}
+
+	if trayID, found, err := b.findBambuTrayAssignmentForSpool(spoolID); err != nil {
+		log.Printf("Warning: could not check Bambu tray assignment for spool %d during relocation: %v", spoolID, err)
+	} else if found {
+		if keep.TrayUniqueID == "" || trayID != keep.TrayUniqueID {
+			if err := b.Spoolman.UnassignSpoolFromTray(spoolID); err != nil {
+				return fmt.Errorf("failed to unassign spool %d from Bambu tray: %w", spoolID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // AssignSpoolToLocation assigns a spool to a location and updates Spoolman.
 func (b *FilamentBridge) AssignSpoolToLocation(spoolID int, printerName string, toolheadID int, locationName string, isPrinterLocation bool) error {
 	if isPrinterLocation {
@@ -182,8 +218,8 @@ func (b *FilamentBridge) AssignSpoolToLocation(spoolID int, printerName string, 
 		log.Printf("Successfully assigned spool %d to %s toolhead %d (%s)", spoolID, printerName, toolheadID, displayName)
 	} else {
 		// This is a non-printer location (drybox, storage, etc.)
-		if err := b.clearSpoolFromAllToolheads(spoolID); err != nil {
-			log.Printf("Warning: Failed to clear spool %d from toolheads: %v", spoolID, err)
+		if err := b.RelocateSpoolFromPreviousAssignments(spoolID, ExcludeAssignment{}); err != nil {
+			return err
 		}
 
 		if locationName == "" {

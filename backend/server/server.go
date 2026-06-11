@@ -148,6 +148,18 @@ func requestHost(c *gin.Context) string {
 	return c.Request.Host
 }
 
+// nfcBaseURL returns the base URL used to build NFC/QR tag URLs. The
+// configured filabridge_public_url takes priority (tags must be reachable
+// from phones on the LAN); the request host is only a fallback.
+func nfcBaseURL(bridge *core.FilamentBridge, c *gin.Context) string {
+	if v, err := bridge.GetConfigValue(core.ConfigKeyFilabridgePublicURL); err == nil {
+		if u := strings.TrimRight(strings.TrimSpace(v), "/"); u != "" {
+			return u
+		}
+	}
+	return "http://" + requestHost(c)
+}
+
 // WebSocket hub methods
 
 // run starts the WebSocket hub.

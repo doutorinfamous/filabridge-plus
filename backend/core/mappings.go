@@ -35,6 +35,13 @@ func (b *FilamentBridge) getToolheadMappingLocked(printerID string, toolheadID i
 
 // SetToolheadMapping maps a spool to a specific toolhead, preserving any custom display name.
 func (b *FilamentBridge) SetToolheadMapping(printerID string, toolheadID int, spoolID int) error {
+	if err := b.RelocateSpoolFromPreviousAssignments(spoolID, ExcludeAssignment{
+		PrinterID:  printerID,
+		ToolheadID: toolheadID,
+	}); err != nil {
+		return err
+	}
+
 	b.Mutex.Lock()
 
 	// Get the previous spool ID before replacing it (for auto-assignment feature)
@@ -42,14 +49,6 @@ func (b *FilamentBridge) SetToolheadMapping(printerID string, toolheadID int, sp
 	if err != nil {
 		b.Mutex.Unlock()
 		return fmt.Errorf("failed to get previous spool mapping: %w", err)
-	}
-
-	if err := b.ensureSpoolNotAssignedElsewhereLocked(spoolID, ExcludeAssignment{
-		PrinterID:  printerID,
-		ToolheadID: toolheadID,
-	}); err != nil {
-		b.Mutex.Unlock()
-		return err
 	}
 
 	_, err = b.DB.Exec(`

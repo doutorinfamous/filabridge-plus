@@ -279,8 +279,8 @@ export function HomeAssistantSettings() {
         </Field>
         <Field
           id="filabridge_public_url"
-          label="URL pública do FilaBridge (webhooks)"
-          hint="Precisa ser acessível a partir do Home Assistant — não use localhost se o HA roda em outra máquina"
+          label="URL pública do FilaBridge (webhooks e tags NFC/QR)"
+          hint="Usada nos webhooks do HA e como base das URLs de tags NFC/QR — precisa ser acessível pela rede (não use localhost nem 0.0.0.0)"
         >
           <Input
             id="filabridge_public_url"

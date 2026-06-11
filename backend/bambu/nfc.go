@@ -80,7 +80,8 @@ func findTrayByPrinterAndType(b *core.FilamentBridge, printerName string, isExte
 }
 
 // GenerateNFCURLs builds NFC/QR URL entries for all registered Bambu trays.
-func GenerateNFCURLs(b *core.FilamentBridge, host string) ([]map[string]interface{}, error) {
+// baseURL must be a full base URL like "http://192.168.1.20:5000" (no trailing slash).
+func GenerateNFCURLs(b *core.FilamentBridge, baseURL string) ([]map[string]interface{}, error) {
 	configs, err := b.GetBambuPrinterConfigs()
 	if err != nil {
 		return nil, err
@@ -97,7 +98,7 @@ func GenerateNFCURLs(b *core.FilamentBridge, host string) ([]map[string]interfac
 			if locationParam == "" {
 				locationParam = FormatTrayDisplayName(cfg.Name, tray.AMSNumber, tray.TrayNumber, tray.IsExternal)
 			}
-			nfcURL := fmt.Sprintf("http://%s/api/nfc/assign?location=%s", host, url.QueryEscape(locationParam))
+			nfcURL := fmt.Sprintf("%s/api/nfc/assign?location=%s", baseURL, url.QueryEscape(locationParam))
 			entry := map[string]interface{}{
 				"type":           "location",
 				"location_type":  "ams_slot",

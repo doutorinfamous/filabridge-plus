@@ -23,7 +23,7 @@ func findSpoolIDForTray(spools []spoolman.Spool, tray Tray) int {
 
 // AssignSpoolToTray assigns a spool to a Bambu AMS tray via Spoolman extra.active_tray.
 func AssignSpoolToTray(b *core.FilamentBridge, spoolID int, trayUniqueID, displayName string) error {
-	if err := b.EnsureSpoolNotAssignedElsewhere(spoolID, core.ExcludeAssignment{TrayUniqueID: trayUniqueID}); err != nil {
+	if err := b.RelocateSpoolFromPreviousAssignments(spoolID, core.ExcludeAssignment{TrayUniqueID: trayUniqueID}); err != nil {
 		return err
 	}
 

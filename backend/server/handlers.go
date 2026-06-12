@@ -358,13 +358,6 @@ func (ws *WebServer) updatePrinterHandler(c *gin.Context) {
 
 	printerID := c.Param("id")
 
-	oldPrinterConfigs, err := ws.bridge.GetAllPrinterConfigs()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	oldPrinterConfig, hadOldConfig := oldPrinterConfigs[printerID]
-
 	var printerConfig core.PrinterConfig
 	if err := c.ShouldBindJSON(&printerConfig); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -414,11 +407,11 @@ func (ws *WebServer) updatePrinterHandler(c *gin.Context) {
 		return
 	}
 
-	if hadOldConfig && printerConfig.Toolheads > oldPrinterConfig.Toolheads {
+	if printerConfig.Driver != core.DriverBambuHA {
 		ws.bridge.EnsurePrinterToolheadLocationsInSpoolman(
 			printerID,
 			printerConfig.Name,
-			oldPrinterConfig.Toolheads,
+			0,
 			printerConfig.Toolheads,
 		)
 	}

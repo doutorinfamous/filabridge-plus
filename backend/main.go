@@ -57,6 +57,7 @@ func main() {
 		if err := bridge.BackfillTraySpoolAssignments(); err != nil {
 			log.Printf("Warning: %v", err)
 		}
+		bridge.SyncAllPrinterToolheads()
 	}()
 
 	// Override port from DB config only when the flag was not set explicitly.

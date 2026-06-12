@@ -135,9 +135,67 @@ func (b *FilamentBridge) GetAllToolheadNames(printerID string) (map[int]string, 
 	return names, nil
 }
 
-// EnsurePrinterToolheadLocationsInSpoolman registers empty toolhead locations in Spoolman settings.
-// fromToolheadID is inclusive; toolheadCount is the total number of toolheads on the printer.
+// SyncToolheadSlots upserts printer_slots rows for every configured toolhead and
+// removes slots beyond toolheadCount. Preserves spool_id, mapped_at and custom names.
+func (b *FilamentBridge) SyncToolheadSlots(printerID string, toolheadCount int) error {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+
+	for toolheadID := 0; toolheadID < toolheadCount; toolheadID++ {
+		defaultName := DefaultToolheadDisplayName(toolheadID)
+		_, err := b.DB.Exec(`
+			INSERT INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, display_name)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(slot_id) DO UPDATE SET
+				display_name = CASE
+					WHEN printer_slots.display_name IS NULL OR printer_slots.display_name = ''
+					THEN excluded.display_name
+					ELSE printer_slots.display_name
+				END
+		`, ToolheadSlotID(printerID, toolheadID), printerID, SlotTypeToolhead, toolheadID, defaultName)
+		if err != nil {
+			return fmt.Errorf("failed to sync toolhead slot %d: %w", toolheadID, err)
+		}
+	}
+
+	_, err := b.DB.Exec(`
+		DELETE FROM printer_slots
+		WHERE printer_id = ? AND slot_type = ? AND toolhead_id >= ?
+	`, printerID, SlotTypeToolhead, toolheadCount)
+	if err != nil {
+		return fmt.Errorf("failed to remove excess toolhead slots: %w", err)
+	}
+
+	return nil
+}
+
+// SyncAllPrinterToolheads reconciles toolhead slots and Spoolman locations for all Moonraker printers.
+func (b *FilamentBridge) SyncAllPrinterToolheads() {
+	configs, err := b.GetAllPrinterConfigs()
+	if err != nil {
+		log.Printf("Warning: Failed to sync printer toolheads: %v", err)
+		return
+	}
+
+	for printerID, cfg := range configs {
+		if cfg.Driver != "" && cfg.Driver != DriverMoonraker {
+			continue
+		}
+		if cfg.Toolheads < 1 {
+			continue
+		}
+		b.EnsurePrinterToolheadLocationsInSpoolman(printerID, cfg.Name, 0, cfg.Toolheads)
+	}
+}
+
+// EnsurePrinterToolheadLocationsInSpoolman syncs toolhead slots and registers empty
+// toolhead locations in Spoolman settings. fromToolheadID is inclusive; toolheadCount
+// is the total number of toolheads on the printer.
 func (b *FilamentBridge) EnsurePrinterToolheadLocationsInSpoolman(printerID, printerName string, fromToolheadID, toolheadCount int) {
+	if err := b.SyncToolheadSlots(printerID, toolheadCount); err != nil {
+		log.Printf("Warning: Failed to sync toolhead slots for %s: %v", printerID, err)
+	}
+
 	for toolheadID := fromToolheadID; toolheadID < toolheadCount; toolheadID++ {
 		displayName, err := b.GetToolheadName(printerID, toolheadID)
 		if err != nil {

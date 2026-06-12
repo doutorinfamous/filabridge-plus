@@ -51,11 +51,19 @@ func (b *FilamentBridge) SetToolheadMapping(printerID string, toolheadID int, sp
 		return fmt.Errorf("failed to get previous spool mapping: %w", err)
 	}
 
+	displayName := DefaultToolheadDisplayName(toolheadID)
 	_, err = b.DB.Exec(`
-		INSERT INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, spool_id, mapped_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(slot_id) DO UPDATE SET spool_id = excluded.spool_id, mapped_at = excluded.mapped_at
-	`, ToolheadSlotID(printerID, toolheadID), printerID, SlotTypeToolhead, toolheadID, spoolID, time.Now())
+		INSERT INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, display_name, spool_id, mapped_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(slot_id) DO UPDATE SET
+			spool_id = excluded.spool_id,
+			mapped_at = excluded.mapped_at,
+			display_name = CASE
+				WHEN printer_slots.display_name IS NULL OR printer_slots.display_name = ''
+				THEN excluded.display_name
+				ELSE printer_slots.display_name
+			END
+	`, ToolheadSlotID(printerID, toolheadID), printerID, SlotTypeToolhead, toolheadID, displayName, spoolID, time.Now())
 	if err != nil {
 		b.Mutex.Unlock()
 		return fmt.Errorf("failed to set toolhead mapping: %w", err)

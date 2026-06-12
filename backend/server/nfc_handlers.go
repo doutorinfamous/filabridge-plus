@@ -339,6 +339,19 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		}
 	}
 
+	// Moonraker toolhead NFC URLs (canonical entries for all configured toolheads)
+	toolheadLocationNames := make(map[string]struct{})
+	if toolheadURLs, err := core.GenerateToolheadNFCURLs(ws.bridge, baseURL); err == nil {
+		for _, entry := range toolheadURLs {
+			urls = append(urls, entry)
+			if displayName, ok := entry["display_name"].(string); ok {
+				toolheadLocationNames[normalizeNFCLocationName(displayName)] = struct{}{}
+			}
+		}
+	} else {
+		log.Printf("Warning: Failed to generate toolhead NFC URLs: %v", err)
+	}
+
 	spoolmanLocations, err := ws.bridge.Spoolman.GetLocations()
 	if err != nil {
 		log.Printf("Warning: Failed to get Spoolman locations: %v", err)
@@ -359,6 +372,9 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 			continue
 		}
 		if _, exists := bambuLocationNames[normalizeNFCLocationName(location.Name)]; exists {
+			continue
+		}
+		if _, exists := toolheadLocationNames[normalizeNFCLocationName(location.Name)]; exists {
 			continue
 		}
 

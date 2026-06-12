@@ -3,6 +3,18 @@
 # If either process dies, the container exits so the orchestrator restarts it.
 set -e
 
+DATA_DIR="${FILABRIDGE_DB_PATH:-/app/data}"
+SEED_DIR="/app/seed"
+DB_NAME="filabridge.db"
+
+mkdir -p "$DATA_DIR"
+
+# Seed the Docker volume once from the local dev database (read-only mount).
+if [ ! -f "$DATA_DIR/$DB_NAME" ] && [ -f "$SEED_DIR/$DB_NAME" ]; then
+  cp "$SEED_DIR/$DB_NAME" "$DATA_DIR/$DB_NAME"
+  echo "Seeded $DATA_DIR/$DB_NAME from $SEED_DIR/$DB_NAME"
+fi
+
 shutdown() {
   kill -TERM "$GO_PID" "$NODE_PID" 2>/dev/null || true
 }

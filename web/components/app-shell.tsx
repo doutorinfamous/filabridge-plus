@@ -95,7 +95,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="border-t border-sidebar-border p-4 text-[11px] text-muted-foreground">
-          Snapmaker · Bambu Lab · Spoolman
+          <Link
+            href="https://github.com/doutorinfamous"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="transition-colors hover:text-foreground"
+          >
+            Made by Papai Nerd
+          </Link>
         </div>
       </aside>
 

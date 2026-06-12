@@ -1,221 +1,188 @@
 # FilaBridge+
 
-**UPDATE: DEVELOPMENT IS PERMANENTLY HALTED AFTER PRUSA STOLE THOUSANDS OF DOLLARS FROM ME AND OVER SIX MONTHS OF MY LIFE DUE TO THEIR SHITTY SUPPORT AND NOT ABLE TO MAKE WORKING PRINTERS.**
-
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go)](https://golang.org/)
-[![GitHub release](https://img.shields.io/github/v/release/needo37/filabridge)](https://github.com/needo37/filabridge/releases)
+[![Node.js](https://img.shields.io/badge/Node.js-22-339933?logo=node.js)](https://nodejs.org/)
 
-A high-performance Go microservice that bridges PrusaLink-compatible printers and Spoolman for (mostly) automatic filament inventory management. Originally designed for Prusa printers (CORE One, XL, MK4, etc.) but works with any printer that supports the PrusaLink API.
+A high-performance Go microservice with a modern Next.js web UI that bridges your 3D printers and **Spoolman** for (mostly) automatic filament inventory management.
+
+> **This fork** is maintained by [Papai Nerd](https://github.com/doutorinfamous) at [github.com/doutorinfamous/filabridge](https://github.com/doutorinfamous/filabridge). It focuses on **Snapmaker** and **Bambu Lab** printers. **PrusaLink / Prusa printer support has been removed** — see [Acknowledgments](#acknowledgments) below.
+
+## Acknowledgments
+
+**FilaBridge** was originally created by **[needo37](https://github.com/needo37)** as an open-source bridge between [PrusaLink](https://help.prusa3d.com/article/prusa-link-and-prusa-connect_382798)-compatible printers and [Spoolman](https://github.com/Donkie/Spoolman). The original project lives at [github.com/needo37/filabridge](https://github.com/needo37/filabridge).
+
+Thank you, **needo37**, for building the foundation — the Spoolman integration, NFC workflow, SQLite persistence, print-error handling, and the overall architecture that made this fork possible. This version retains the GPL v3 license and builds on that work with a rewritten front-end and new printer integrations.
+
+The original author discontinued active development on the Prusa-focused codebase. This fork continues the project for different hardware:
+
+| Integration | Status in this fork |
+|-------------|---------------------|
+| **Snapmaker U1** (Moonraker / Klipper) | Supported — direct API, G-code parsing |
+| **Bambu Lab** (AMS + external spool) | Supported — via **Home Assistant** + [ha-bambulab](https://github.com/greghesp/ha-bambulab) |
+| **PrusaLink / Prusa printers** | **Not supported** |
 
 ### The Problem
 
-I run multiple 3D printers and use Spoolman to track my filament inventory. The issue? I had to manually update filament usage after every print. With multi-material prints on my Prusa XL, this was getting tedious and error-prone.
+Running multiple 3D printers with Spoolman means keeping filament inventory in sync after every print. Multi-material jobs make manual updates tedious and error-prone. FilaBridge+ watches your printers, tracks which spools are loaded where, and debits Spoolman when prints finish — with NFC tags for quick assignments across toolheads, AMS slots, and storage locations.
 
 ## Features
 
-- 🔗 **PrusaLink Compatibility**: Works with any PrusaLink-compatible printer (Prusa CORE One, XL, MK4, Mini, and more)
-- 📊 **Real-time Dashboard**: Web interface with live updates via WebSocket connections
-- 🎯 **Multi-Toolhead Support**: Seamlessly handles single and multi-toolhead printers (tested with 5-toolhead Prusa XL)
-- 📈 **Smart Usage Tracking**: Automatically parses G-code files to accurately track filament consumption per toolhead
-- 💾 **Persistent Storage**: SQLite database stores toolhead mappings and complete print history
-- ⚡ **High Performance**: Single lightweight binary, minimal resource usage, fast execution
-- 🔧 **Web-based Config**: No config files needed - manage everything through the web UI
-- 🔍 **Smart Spool Search**: Search and filter spools by ID, material, brand, or name with real-time filtering
-- ⚠️ **Error Handling**: Print error detection with acknowledgment system for failed filament tracking
-- 🔄 **Auto-mapping**: Automatic spool assignment when selecting from dropdown menus
-- 🌐 **Live Updates**: Real-time status updates without page refreshes using WebSocket technology
-- 🏷️ **NFC Tag Support**: Generate QR codes and program NFC tags for spools, filaments, and locations
-- 📱 **Smart Scanning**: Two-step NFC workflow - scan spool + location (or location + spool) for instant assignment
-- 📍 **Location Tracking**: Track spools in custom locations (dryboxes) or printer toolheads
+- **Snapmaker U1 (Moonraker)**: Direct Moonraker API integration with G-code parsing for accurate per-toolhead usage
+- **Bambu Lab (Home Assistant)**: AMS tray mapping, RFID auto-assignment, and webhook-based usage tracking through ha-bambulab
+- **Real-time Dashboard**: Live printer status via WebSocket with polling fallback
+- **Multi-Toolhead / Multi-Slot**: Moonraker toolheads and Bambu AMS slots (plus external spool)
+- **Smart Usage Tracking**: G-code parsing (Snapmaker) and HA utility-meter webhooks (Bambu)
+- **Print History**: Job log with consumption per spool
+- **Persistent Storage**: SQLite for mappings, slots, locations, and history
+- **High Performance**: Lightweight Go backend + Next.js UI in a single container or binary workflow
+- **Web-based Config**: Spoolman, Home Assistant, printers, and behavior — all in Settings
+- **Smart Spool Search**: Filter spools by ID, material, brand, or name
+- **Error Handling**: Print processing errors with acknowledge / resolve flow
+- **NFC Tag Support**: QR codes and NFC tags for spools, filaments, toolheads, AMS slots, and custom locations
+- **NFC Direct Write**: Only available in some devices with Chrome on Android.
+- **Location Tracking**: Dryboxes, shelves, toolheads, and AMS slots
 
-## Why FilaBridge+?
+## Supported Printer Integrations
 
-Managing filament inventory across multiple 3D printers is tedious. FilaBridge+ automates this by:
-- Monitoring your printers in real-time with live WebSocket updates
-- Tracking which spools are loaded on which toolheads
-- Automatically updating your Spoolman inventory when prints complete
-- Providing accurate filament usage by parsing G-code files
-- Handling errors gracefully with clear notifications and acknowledgment system
-- Using NFC tags to quickly assign spools to printers or storage locations
-- Tracking filament locations across your workshop
+### Snapmaker U1 (Moonraker)
 
-No more manual updates or guesswork about remaining filament!
+Connect directly to the printer's **Moonraker** instance. FilaBridge+ polls job state, downloads G-code on completion, and calculates filament usage per extruder/toolhead.
 
-## Screenshots
+- Add the printer in **Settings → Printers → Snapmaker U1**
+- Map Spoolman spools to toolheads on the dashboard
+- Usage is debited when the job reaches a completed state
 
-![FilaBridge+ Dashboard](https://github.com/needo37/filabridge/blob/main/screenshots/dashboard.png?raw=true)
-*FilaBridge+ main dashboard showing printer status and toolhead mappings*
+Other Klipper/Moonraker printers may work with the same driver; **Snapmaker U1** is the tested target.
 
-![Spool Tags Management](https://github.com/needo37/filabridge/blob/main/screenshots/spool_tags.png?raw=true)
-*NFC Management interface for generating QR codes for individual spools*
+### Bambu Lab (Home Assistant)
 
-![Filament Tags Management](https://github.com/needo37/filabridge/blob/main/screenshots/filament_tags.png?raw=true)
-*Filament type QR code generation for new unopened spools*
+Bambu printers are integrated **indirectly** through **Home Assistant** and the community **[ha-bambulab](https://github.com/greghesp/ha-bambulab)** add-on (install via HACS). FilaBridge+ does not talk to the printer directly — it discovers printers from HA, generates YAML automation packages, and receives webhooks for spool usage and tray changes.
 
-![Location Tags Management](https://github.com/needo37/filabridge/blob/main/screenshots/location_tags.png?raw=true)
-*Location management interface for creating printer toolhead and storage location QR codes*
+1. Install **ha-bambulab** in Home Assistant and add your printer (LAN or Cloud)
+2. Configure **HA URL**, **token**, and **FilaBridge+ public URL** in **Settings → General → Home Assistant**
+3. Register the printer under **Settings → Printers → Bambu Lab (HA)**
+4. Download the **HA package** YAML, place it in HA `packages/`, and restart Home Assistant
+5. Map AMS slots to Spoolman spools on the dashboard or via NFC
+
+Full step-by-step guide: **[docs/home-assistant-setup.md](../docs/home-assistant-setup.md)**
 
 ## Prerequisites
 
-- A PrusaLink-compatible 3D printer (Prusa or any printer with PrusaLink API)
-- PrusaLink enabled on your printer(s) for local network access
-- Spoolman
-- **For building from source**: Go 1.23 or higher
-- **(Optional) For NFC features**: NFC-capable smartphone and NFC tags (NTAG213/215/216 recommended)
-- **(Recommendation) NFC Tools Pro** mobile app (for programming tags)
+- **[Spoolman](https://github.com/Donkie/Spoolman)** on your network
+- **For Snapmaker**: Moonraker-enabled printer (Snapmaker U1 recommended)
+- **For Bambu Lab**:
+  - [Home Assistant](https://www.home-assistant.io/)
+  - [HACS](https://hacs.xyz/)
+  - [ha-bambulab](https://github.com/greghesp/ha-bambulab) integration
+- **For building from source**: Go 1.23+, Node.js 20+
+- **(Optional) NFC**: NFC-capable phone and NTAG213/215/216 tags; **NFC Tools Pro** (or similar) to program tags
 
 ## Installation
 
-### Option 1: Docker (Easiest)
+### Option 1: Docker (recommended)
 
 1. **Run Spoolman** (if not already running):
+
    ```bash
    docker run -d --name spoolman -p 8000:8000 -v spoolman-data:/home/spoolman/data ghcr.io/donkie/spoolman:latest
    ```
 
-2. **Run FilaBridge+**:
+2. **Clone and start FilaBridge+**:
+
    ```bash
-   docker run -d --name filabridge -p 5000:5000 \
-     -v .:/app/data \
-     ghcr.io/needo37/filabridge:latest
-   ```
-
-3. **Configure**: Open `http://localhost:5000` and click "⚙️ Configuration"
-
-**Using docker-compose (recommended for full stack):**
-```bash
-git clone https://github.com/needo37/filabridge.git
-cd filabridge
-docker-compose up -d
-```
-
-The docker-compose.yml automatically sets the `FILABRIDGE_DB_PATH` environment variable to `/app/data` to ensure the database persists in the mounted volume.
-
-**Spoolman on the Docker host:** If Spoolman runs outside the FilaBridge+ container (on your PC or in another container), configure the Spoolman URL in the web UI as `http://host.docker.internal:8000` (adjust the port if needed). Do **not** use `localhost` — inside the container that address points to FilaBridge+ itself, not your host machine. The compose file includes `extra_hosts: host.docker.internal:host-gateway` for this on Linux; on Docker Desktop for Windows/macOS this hostname works out of the box.
-
-### Option 2: Pre-built Binary
-
-1. **Download the latest release** for your platform from the [Releases page](https://github.com/needo37/filabridge/releases)
-   - Linux (amd64, arm64)
-   - macOS (amd64/Intel, arm64/Apple Silicon)
-   - Windows (amd64)
-
-2. **Make it executable** (Linux/macOS):
-   ```bash
-   chmod +x filabridge
-   ```
-
-3. **Run Spoolman** (if not already running):
-   ```bash
-   docker run -d --name spoolman -p 8000:8000 -v spoolman-data:/home/spoolman/data ghcr.io/donkie/spoolman:latest
-   ```
-
-4. **Start FilaBridge+**:
-   ```bash
-   ./filabridge
-   ```
-
-5. **Configure**: Open `http://localhost:5000` and click "⚙️ Configuration"
-
-### Option 3: Build from Source
-
-1. **Clone and build**:
-   ```bash
-   git clone https://github.com/needo37/filabridge.git
+   git clone https://github.com/doutorinfamous/filabridge.git
    cd filabridge
-
-   # Backend (Go API — port 5001)
-   cd backend && go build -o filabridge . && cd ..
-
-   # Front-end (Next.js — port 5000, proxies to the API)
-   cd web && npm install && npm run build && cd ..
+   docker compose up -d --build
    ```
 
-2. **Run Spoolman** (if not already running):
-   ```bash
-   docker run -d --name spoolman -p 8000:8000 -v spoolman-data:/home/spoolman/data ghcr.io/donkie/spoolman:latest
-   ```
+3. **Configure**: Open `http://localhost:5000` → **Settings**
 
-3. **Start FilaBridge+**:
-   ```bash
-   ./filabridge
-   ```
+**Spoolman on the Docker host:** If Spoolman runs outside the FilaBridge+ container, set the Spoolman URL in the web UI to `http://host.docker.internal:8000` (adjust the port if needed). Do **not** use `localhost` — inside the container that address points to FilaBridge+ itself. The compose file includes `extra_hosts: host.docker.internal:host-gateway` for Linux; Docker Desktop on Windows/macOS provides this hostname by default.
+
+The database persists in the `filabridge_data` Docker volume (`FILABRIDGE_DB_PATH=/app/data`).
 
 ## Configuration
 
-The system stores all configuration in the SQLite database. For Docker deployments, you can optionally set the `FILABRIDGE_DB_PATH` environment variable to specify where the database should be stored (defaults to `/app/data` in Docker).
+All settings are stored in SQLite (`filabridge.db`). In Docker, set `FILABRIDGE_DB_PATH` to control the data directory (default `/app/data`).
 
-### First Run
+### First run
 
-1. Start the application
-2. Open the web interface at `http://localhost:5000`
-3. Click "Start Configuration" button
-4. Enter a name for your Printer.
-5. Enter your PrusaLink IP Address and API key
-6. Choose the number of toolheads your printer has.
-7. Click "Save Configuration"
-8. The service will automatically restart with new settings
+1. Start FilaBridge+ and open `http://localhost:5000`
+2. **Settings → Spoolman** — enter Spoolman URL and test the connection
+3. **Settings → Home Assistant** — required for Bambu; enter HA URL, long-lived token, and the URL HA uses to reach FilaBridge+ (must be a LAN IP, not `localhost`, when HA is on another machine)
+4. **Settings → Printers** — add a Snapmaker U1 (Moonraker host) and/or register a Bambu printer from HA discovery
+5. **Dashboard** — map Spoolman spools to toolheads or AMS slots
+
+For Bambu, after registering a printer, download the HA package, install it in Home Assistant, restart HA, and use **Validate HA** in Settings.
 
 ## Usage
 
-### Running the Service
+### Web interface
 
-```bash
-# Run both bridge service and web interface (recommended)
-./filabridge
+| Page | Purpose |
+|------|---------|
+| **Dashboard** | Printer status, toolhead / AMS mapping, print errors, connection health |
+| **History** | Completed and failed jobs with filament consumption |
+| **NFC & QR** | Generate tags for spools, filaments, locations, toolheads, and AMS slots |
+| **Settings** | Spoolman, Home Assistant, printers, polling/timeouts, database browser |
 
-# Custom host and port
-./filabridge --host 0.0.0.0 --port 8080
-```
+Real-time updates use WebSocket (`/ws/status`); the UI falls back to polling if the socket drops.
 
-### Web Interface
+### Filament workflow
 
-The web interface provides:
+1. Add spools in **Spoolman**
+2. Map spools to Moonraker toolheads or Bambu AMS slots in FilaBridge+
+3. Print — usage is tracked automatically on job completion (Snapmaker) or via HA webhooks (Bambu)
+4. Acknowledge any processing errors shown on the dashboard
 
-- **Printer Status**: Real-time view of printer states and current jobs with live WebSocket updates
-- **Toolhead Mapping**: Assign filament spools to specific toolheads with smart search functionality
-- **Progress Monitoring**: Visual progress bars for active prints
-- **Live Updates**: Real-time status updates without page refreshes
-- **Spool Search**: Search and filter spools by ID, material, brand, or name
-- **Error Management**: View and acknowledge print processing errors
-- **Auto-mapping**: Automatic spool assignment when selecting from dropdowns
+### NFC workflow
 
-### Filament Management
-
-1. **Add spools to Spoolman**: Use Spoolman's web interface to add your filament spools
-2. **Map spools to toolheads**: Use the FilaBridge+ web interface to assign spools with smart search
-3. **Monitor usage**: The system automatically tracks and updates filament usage
-4. **Handle errors**: Acknowledge any print processing errors that require manual intervention
-
-### NFC Tag Management
-
-1. **Generate QR Codes**: Navigate to NFC Management tab in the web interface
-2. **Create Tags**: 
-   - **Spool Tags**: Generate QR codes for individual spools
-   - **Filament Tags**: Generate QR codes for filament types (for new unopened spools)
-   - **Location Tags**: Create and generate QR codes for printer toolheads and custom locations (dryboxes, storage shelves, etc.)
-3. **Program NFC Tags**: Use NFC Tools Pro to scan QR codes and write URLs to NFC tags
-4. **Assign Spools**: Tap spool tag, then location tag (location then spool works as well) to instantly assign and update inventory
+1. Generate QR/NFC URLs on **NFC & QR**
+2. Program tags with NFC Tools Pro (or similar) or direct via browser on supported Chrome on Android devices.
+3. Scan **spool** then **location** (or the reverse) on `/nfc/scan` — toolheads, AMS slots, and custom locations are supported
+4. Sessions expire after 5 minutes; complete both scans within the timeout
 
 ## API Endpoints
 
-The web interface also provides REST API endpoints:
+The Next.js server on port **5000** is the single entry point: it serves the UI and proxies `/api/*` and `/ws/*` to the Go backend on **5001**.
 
-- `GET /api/status` - Get current printer status and mappings
-- `GET /api/spools` - Get all spools from Spoolman
-- `POST /api/map_toolhead` - Map a spool to a toolhead
-- `POST /api/unmap_toolhead` - Unmap a spool from a toolhead
-- `GET /api/print-errors` - Get all unacknowledged print errors
-- `POST /api/print-errors/{id}/acknowledge` - Acknowledge a print error
-- `GET /api/nfc/assign` - Handle NFC tag scans (spool or location)
-- `GET /api/nfc/urls` - Get all NFC URLs with QR codes
-- `GET /api/nfc/session/status` - Check NFC session status
-- `GET /api/locations` - Get all locations
-- `POST /api/locations` - Create custom location
-- `PUT /api/locations/{name}` - Rename location
-- `DELETE /api/locations/{name}` - Delete location
-- `WS /ws/status` - WebSocket endpoint for real-time status updates
+### Core
+
+- `GET /api/status` — Printer status, mappings, and health
+- `GET /api/spools` — All spools from Spoolman
+- `GET /api/filaments` — All filament types from Spoolman
+- `POST /api/map_toolhead` — Map a spool to a Moonraker toolhead
+- `GET /api/available_spools` — Spools available for assignment
+- `GET|POST /api/spoolman/test` — Test Spoolman connection
+- `GET /api/config` / `POST /api/config` — Global configuration
+- `GET|POST /api/printers` — List / add printers
+- `GET /api/print-errors` — Unacknowledged print errors
+- `POST /api/print-errors/{id}/acknowledge` — Acknowledge error
+- `POST /api/print-errors/{id}/resolve` — Resolve error
+- `GET /api/history/jobs` — Print history list
+- `GET /api/history/jobs/{id}` — Single job detail
+- `WS /ws/status` — Real-time status WebSocket
+
+### Home Assistant & Bambu
+
+- `GET|POST /api/ha/test` — Test HA connection
+- `GET|POST /api/ha/config` — HA settings
+- `GET /api/ha/printers` — Discover Bambu printers from HA
+- `POST /api/ha/printers` — Register a Bambu printer
+- `GET /api/ha/automations/{id}` — Download HA package YAML
+- `GET /api/ha/validate/{id}` — Validate required HA entities
+- `POST /api/trays/assign` — Assign spool to AMS slot
+- `GET|POST /api/webhook` — Bambu/HA webhook receiver
+
+### NFC & locations
+
+- `GET /api/nfc/assign` — NFC scan handler (spool or location)
+- `GET /api/nfc/urls` — NFC URLs with QR data
+- `GET /api/nfc/session/status` — Active NFC session
+- `POST /api/nfc/session/select-spool` — Pick spool during NFC flow
+- `GET|POST /api/locations` — Custom storage locations
+- `GET /api/locations/{name}/status` — Location occupancy
 
 ## Project Structure
 
@@ -223,72 +190,55 @@ The web interface also provides REST API endpoints:
 filabridge/
 ├── backend/               # Go API (internal port 5001)
 │   ├── main.go            # Entry point (--web-only / --bridge-only / --port)
-│   ├── core/              # Bridge, SQLite, config, and filament accounting
+│   ├── core/              # Bridge, SQLite, config, history, filament accounting
 │   ├── snapmaker/         # Snapmaker U1: Moonraker client, G-code, monitor
 │   ├── bambu/             # Bambu Lab: HA discovery, AMS trays, webhooks, YAML
 │   ├── spoolman/          # Spoolman API client
-│   ├── homeassistant/     # Home Assistant REST/WebSocket client
+│   ├── homeassistant/     # Home Assistant REST client
 │   ├── nfc/               # NFC sessions (spool + location)
 │   └── server/            # HTTP API (Gin) + WebSocket /ws/status
 ├── web/                   # Next.js + shadcn/ui front-end (port 5000)
-│   ├── app/               # Dashboard, NFC, Settings + /api proxy
-│   ├── components/        # Printer cards, comboboxes, etc.
-│   └── lib/               # API client, types, and WebSocket hook
+│   ├── app/               # Dashboard, History, NFC, Settings + /api proxy
+│   ├── components/        # Printer cards, comboboxes, settings forms
+│   └── lib/               # API client, types, WebSocket hook
+├── docs/                  # Setup guides (home-assistant-setup.md)
 ├── docker/entrypoint.sh   # Runs Go (5001) + Next.js (5000) in one container
-├── Dockerfile             # Build multi-stage (Go + Node)
+├── Dockerfile
 └── docker-compose.yml
 ```
 
-The Next.js server is the single entry point (port **5000**): it serves the UI and
-proxies `/api/*` and `/ws/*` to the Go backend on the internal port 5001, so all
-API paths remain exactly the same as before.
-
 ## Troubleshooting
 
-### Common Issues
+### Snapmaker / Moonraker
 
-1. **Printers not accessible**:
-   - Check IP addresses in the web interface configuration
-   - Ensure PrusaLink is enabled on both printers
-   - Verify network connectivity
+- Verify Moonraker host/IP in **Settings → Printers**
+- Ensure spools are mapped to toolheads before printing
+- Prints must reach a **completed** state for G-code parsing to run
+- Check backend logs for `Print finished detected` and G-code download errors
 
-2. **Spoolman connection failed**:
-   - Make sure Spoolman is running
-   - Check the Spoolman URL in the web interface configuration
-   - Verify Spoolman is accessible at the specified URL
+### Bambu Lab / Home Assistant
 
-3. **Filament usage not tracked**:
-   - Ensure spools are mapped to toolheads in the FilaBridge+ dashboard
-   - Check that prints reach `complete` state (not only paused or error)
-   - If FilaBridge+ runs in Docker and Spoolman on the host, set Spoolman URL to `http://host.docker.internal:PORT` (not `localhost`)
-   - Review container logs for `Print finished detected` or `complete-state` detection
-   - Red error banners appear when G-code parsing fails, no spool is mapped, or Spoolman rejects the update
+- Confirm **ha-bambulab** is installed and the printer appears in HA
+- **FilaBridge+ public URL** must be reachable from HA (use LAN IP, not `localhost`)
+- After updating the HA package, **restart Home Assistant** and run **Validate HA**
+- Required entities: `sensor.filabridge_*_filament_usage`, `*_filament_usage_meter`, `input_number.filabridge_*_last_tray`, `sensor.filabridge_*_active_tray`
+- See **[docs/home-assistant-setup.md](../docs/home-assistant-setup.md)** for webhook tests and `utility_meter.calibrate` issues
 
-4. **WebSocket connection issues**:
-   - Check browser console for WebSocket connection errors
-   - Ensure no firewall is blocking WebSocket connections
-   - The interface will fall back to periodic polling if WebSocket fails
+### Spoolman
 
-5. **Print processing errors**:
-   - Check the error notifications in the web interface
-   - Acknowledge errors after manually updating Spoolman
-   - Review logs for detailed error information
+- Confirm Spoolman is running and the URL is correct
+- In Docker, use `http://host.docker.internal:PORT` when Spoolman runs on the host
 
-6. **NFC tag issues**:
-   - Ensure NFC tags are NTAG213, NTAG215, or NTAG216 format
-   - Use NFC Tools Pro to verify tag is properly formatted
-   - QR codes encode the full URL - scan with NFC Tools Pro to program tags
-   - Sessions expire after 5 minutes - complete both scans within the timeout
+### WebSocket
 
-### Logs
+- Check the browser console for connection errors
+- The UI polls automatically if WebSocket fails
 
-The service logs important events to the console. Look for:
-- Printer status updates
-- Filament usage calculations
-- Spoolman update confirmations
-- WebSocket connection status
-- Print processing errors
-- Error messages
+### NFC
+
+- Use NTAG213, NTAG215, or NTAG216 tags
+- QR codes encode full URLs — scan with your NFC app to write tags
+- Complete both scans within the 5-minute session timeout
 
 ## Development
 
@@ -305,46 +255,41 @@ npm install
 npm run dev -- -p 5000
 ```
 
-Open `http://localhost:5000` — Next.js forwards `/api/*` and `/ws/*` to the
-Go backend automatically (configurable via `BACKEND_URL`).
+Open `http://localhost:5000`. Override the backend with `BACKEND_URL` (default `http://127.0.0.1:5001`).
 
-## Contributing
-
-Contributions are welcome! Here's how you can help:
-
-- 🐛 **Report bugs**: Open an issue with details about the problem
-- 💡 **Suggest features**: Share your ideas for improvements
-- 🔧 **Submit PRs**: Fix bugs or add features (please open an issue first for major changes)
-- 📖 **Improve docs**: Help make the documentation clearer
-- ⭐ **Star the repo**: Show your support!
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 
 ## Roadmap
 
-- [ ] Support for additional printer APIs
-- [x] Provide a Docker Image
+- [x] Docker image (Go + Next.js single container)
 - [x] Real-time WebSocket updates
-- [x] Enhanced spool search functionality
-- [x] Print error handling and acknowledgment
-- [x] NFC Support
-- [ ] Mobile-responsive UI improvements
+- [x] NFC support (spools, locations, AMS slots)
+- [x] Snapmaker U1 / Moonraker integration
+- [x] Bambu Lab via Home Assistant + ha-bambulab
+- [x] Print history
+- [x] Modern Next.js + shadcn/ui front-end
+- [ ] Mobile-responsive UI polish
+- [ ] Broader Moonraker/Klipper printer testing
+- [ ] OpenAPI / Swagger documentation
 
-## Support the Project
+## Contributing
 
-If you find FilaBridge+ useful:
-- ⭐ Star the repository
-- 🐛 Report bugs and suggest features
-- 📢 Share it with the 3D printing community
-- 🤝 Contribute code or documentation
+Contributions are welcome!
+
+- Report bugs and suggest features via GitHub Issues
+- Submit focused PRs (see [CONTRIBUTING.md](../CONTRIBUTING.md))
+- Improve docs — especially HA setup and printer-specific guides
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0** — see [LICENSE](../LICENSE). As a fork of [needo37/filabridge](https://github.com/needo37/filabridge), derivative works remain under GPL v3.
 
 ## Support
 
-For issues specific to:
-- **PrusaLink**: Check Prusa's documentation
-- **Spoolman**: Visit the [Spoolman GitHub repository](https://github.com/pdrd/spoolman)
-- **This bridge**: Open an issue in this repository
+| Topic | Where to look |
+|-------|----------------|
+| **This fork (Snapmaker / Bambu / Spoolman bridge)** | [Issues](https://github.com/doutorinfamous/filabridge/issues) on this repository |
+| **Original FilaBridge+ (PrusaLink era)** | [needo37/filabridge](https://github.com/needo37/filabridge) |
+| **Spoolman** | [Donkie/Spoolman](https://github.com/Donkie/Spoolman) |
+| **Bambu in Home Assistant** | [greghesp/ha-bambulab](https://github.com/greghesp/ha-bambulab) |
+| **Moonraker / Klipper** | [Moonraker docs](https://moonraker.readthedocs.io/) |

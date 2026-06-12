@@ -44,7 +44,6 @@ export function SpoolmanSettings() {
     spoolman_url: "",
     spoolman_username: "",
     spoolman_password: "",
-    poll_interval: "30",
   });
 
   React.useEffect(() => {
@@ -55,7 +54,6 @@ export function SpoolmanSettings() {
           spoolman_url: cfg.spoolman_url ?? "",
           spoolman_username: cfg.spoolman_username ?? "",
           spoolman_password: cfg.spoolman_password ?? "",
-          poll_interval: cfg.poll_interval ?? "30",
         });
       })
       .catch(() => toast.error("Failed to load configuration"))
@@ -75,9 +73,18 @@ export function SpoolmanSettings() {
   };
 
   const test = async () => {
+    if (!form.spoolman_url.trim()) {
+      toast.error("Enter the Spoolman URL first");
+      return;
+    }
     setTesting(true);
     try {
-      await api.testSpoolman();
+      // Tests the values currently in the form, even before saving
+      await api.testSpoolman({
+        spoolman_url: form.spoolman_url.trim(),
+        spoolman_username: form.spoolman_username,
+        spoolman_password: form.spoolman_password,
+      });
       toast.success("Spoolman connection OK");
     } catch (error) {
       toast.error(
@@ -93,7 +100,8 @@ export function SpoolmanSettings() {
       <CardHeader>
         <CardTitle className="text-base">Spoolman</CardTitle>
         <CardDescription>
-          Filament inventory used to debit print consumption
+          Filament inventory used to debit print consumption — required for
+          FilaBridge to work
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -137,24 +145,6 @@ export function SpoolmanSettings() {
             />
           </Field>
         </div>
-        <Field
-          id="poll_interval"
-          label="Polling interval (seconds)"
-          hint="How often Moonraker printer status is checked"
-        >
-          <Input
-            id="poll_interval"
-            type="number"
-            min={10}
-            max={300}
-            value={form.poll_interval}
-            disabled={loading}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, poll_interval: e.target.value }))
-            }
-            className="max-w-40"
-          />
-        </Field>
         <div className="flex flex-wrap gap-2 pt-1">
           <Button onClick={save} disabled={saving || loading}>
             {saving ? (

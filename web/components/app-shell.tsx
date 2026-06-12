@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Database,
   History,
   LayoutDashboard,
   Link2,
@@ -18,15 +17,6 @@ const navItems = [
   { href: "/history", label: "History", icon: History },
   { href: "/nfc", label: "NFC & QR", icon: Nfc },
   { href: "/settings", label: "Settings", icon: Settings },
-];
-
-const tempNavItems = [
-  {
-    href: "/temp/database",
-    label: "Database",
-    icon: Database,
-    className: "text-amber-600/90 hover:text-amber-500",
-  },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -73,26 +63,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
-          <div className="my-2 border-t border-sidebar-border" />
-          {tempNavItems.map((item) => {
-            const active = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "hover:bg-sidebar-accent/60",
-                  item.className
-                )}
-              >
-                <item.icon className="size-4" />
-                {item.label}
-              </Link>
-            );
-          })}
         </nav>
         <div className="border-t border-sidebar-border p-4 text-[11px] text-muted-foreground">
           <Link
@@ -129,22 +99,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   active
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground"
-                )}
-                aria-label={item.label}
-              >
-                <item.icon className="size-4.5" />
-              </Link>
-            );
-          })}
-          {tempNavItems.map((item) => {
-            const active = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "rounded-md p-2",
-                  active ? "bg-accent text-accent-foreground" : item.className
                 )}
                 aria-label={item.label}
               >

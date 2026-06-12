@@ -159,6 +159,75 @@ export function TimeoutSettings() {
   );
 }
 
+export function PollingSettings() {
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [pollInterval, setPollInterval] = React.useState("30");
+
+  React.useEffect(() => {
+    api
+      .getConfig()
+      .then((cfg) => setPollInterval(cfg.poll_interval ?? "30"))
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    const value = Number(pollInterval);
+    if (value < 10 || value > 300) {
+      toast.error("Polling interval must be between 10 and 300 seconds");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateConfig({ poll_interval: pollInterval });
+      toast.success("Polling interval saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="border-border/70 bg-card/60">
+      <CardHeader>
+        <CardTitle className="text-base">Polling intervals</CardTitle>
+        <CardDescription>
+          How often FilaBridge checks external services for status updates
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="poll_interval">Moonraker (s)</Label>
+            <Input
+              id="poll_interval"
+              type="number"
+              min={10}
+              max={300}
+              disabled={loading}
+              value={pollInterval}
+              onChange={(e) => setPollInterval(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How often Moonraker printer status is checked
+            </p>
+          </div>
+        </div>
+        <Button onClick={save} disabled={saving || loading}>
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Save className="size-4" />
+          )}
+          Save
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function AutoAssignSettings() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);

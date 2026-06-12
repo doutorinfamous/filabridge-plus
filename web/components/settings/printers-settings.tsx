@@ -1,9 +1,12 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
+  AlertTriangle,
   Boxes,
   CheckCircle2,
+  ChevronRight,
   Download,
   Loader2,
   Pencil,
@@ -58,7 +61,7 @@ const emptyForm: PrinterFormState = {
   ip_address: "",
   api_key: "",
   model: "Snapmaker U1",
-  toolheads: 1,
+  toolheads: 4,
 };
 
 function PrinterFormFields({
@@ -106,18 +109,10 @@ function PrinterFormFields({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label>Model</Label>
-          <Select
-            value={form.model}
-            onValueChange={(v) => setForm((f) => ({ ...f, model: v }))}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Snapmaker U1">Snapmaker U1</SelectItem>
-              <SelectItem value="Unknown">Unknown</SelectItem>
-            </SelectContent>
-          </Select>
+          <Input value="Snapmaker U1" disabled readOnly />
+          <p className="text-xs text-muted-foreground">
+            Only the Snapmaker U1 is supported at the moment
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label>Toolheads</Label>
@@ -225,6 +220,9 @@ export function PrintersSettings() {
   const [bambuList, setBambuList] = React.useState<BambuPrinter[] | null>(null);
   const [bambuError, setBambuError] = React.useState<string | null>(null);
 
+  const [chooserOpen, setChooserOpen] = React.useState(false);
+  const [haConfigured, setHaConfigured] = React.useState<boolean | null>(null);
+
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
@@ -289,8 +287,8 @@ export function PrintersSettings() {
       name: printer.name,
       ip_address: printer.ip_address,
       api_key: printer.api_key,
-      model: printer.model || "Unknown",
-      toolheads: printer.toolheads || 1,
+      model: printer.model || "Snapmaker U1",
+      toolheads: printer.toolheads || 4,
     });
   };
 
@@ -328,6 +326,15 @@ export function PrintersSettings() {
         error instanceof Error ? error.message : "Failed to remove printer"
       );
     }
+  };
+
+  const openChooser = () => {
+    setChooserOpen(true);
+    setHaConfigured(null);
+    api
+      .getHAConfig()
+      .then((cfg) => setHaConfigured(Boolean(cfg.ha_url) && cfg.ha_token_set))
+      .catch(() => setHaConfigured(false));
   };
 
   const openBambuDiscovery = async () => {
@@ -407,11 +414,8 @@ export function PrintersSettings() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => setAddOpen(true)}>
-          <Plus className="size-4" /> Moonraker printer
-        </Button>
-        <Button variant="outline" onClick={openBambuDiscovery}>
-          <Plus className="size-4" /> Bambu Lab (HA)
+        <Button onClick={openChooser}>
+          <Plus className="size-4" /> Add printer
         </Button>
       </div>
 
@@ -523,13 +527,99 @@ export function PrintersSettings() {
         </div>
       )}
 
+      {/* Choose printer type */}
+      <Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add printer</DialogTitle>
+            <DialogDescription>
+              Choose the type of printer you want to add
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                setChooserOpen(false);
+                setAddForm(emptyForm);
+                setAddOpen(true);
+              }}
+              className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left transition-colors hover:bg-accent"
+            >
+              <span className="flex items-center gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/60">
+                  <Printer className="size-4.5 text-muted-foreground" />
+                </span>
+                <span>
+                  <span className="block text-sm font-medium">
+                    Snapmaker U1
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    Connected via Moonraker
+                  </span>
+                </span>
+              </span>
+              <ChevronRight className="size-4 text-muted-foreground" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!haConfigured) return;
+                setChooserOpen(false);
+                openBambuDiscovery();
+              }}
+              disabled={haConfigured !== true}
+              className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-background/50"
+            >
+              <span className="flex items-center gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/60">
+                  <Boxes className="size-4.5 text-emerald-400" />
+                </span>
+                <span>
+                  <span className="block text-sm font-medium">Bambu Lab</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Connected via Home Assistant (ha-bambulab)
+                  </span>
+                </span>
+              </span>
+              {haConfigured === null ? (
+                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              ) : haConfigured ? (
+                <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                  <CheckCircle2 className="size-3.5" /> HA configured
+                </span>
+              ) : (
+                <ChevronRight className="size-4 text-muted-foreground" />
+              )}
+            </button>
+            {haConfigured === false && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs text-warning">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  Home Assistant is not configured yet — it is required for
+                  Bambu Lab printers.{" "}
+                  <Link
+                    href="/settings?tab=home-assistant"
+                    className="font-medium underline underline-offset-2"
+                    onClick={() => setChooserOpen(false)}
+                  >
+                    Configure Home Assistant
+                  </Link>
+                </span>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Add Moonraker printer */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Moonraker printer</DialogTitle>
+            <DialogTitle>Add Snapmaker U1</DialogTitle>
             <DialogDescription>
-              Snapmaker U1 or another Klipper/Moonraker printer
+              Connects to the printer through its Moonraker instance
             </DialogDescription>
           </DialogHeader>
           <PrinterFormFields form={addForm} setForm={setAddForm} />
@@ -571,7 +661,15 @@ export function PrintersSettings() {
             <DialogTitle>Add Bambu Lab (Home Assistant)</DialogTitle>
             <DialogDescription>
               Printers discovered via ha-bambulab. Configure HA URL and token
-              on the General tab first.
+              on the{" "}
+              <Link
+                href="/settings?tab=home-assistant"
+                className="underline underline-offset-2"
+                onClick={() => setBambuOpen(false)}
+              >
+                Home Assistant tab
+              </Link>{" "}
+              first.
             </DialogDescription>
           </DialogHeader>
           <Separator />
@@ -590,6 +688,7 @@ export function PrintersSettings() {
             <div className="space-y-2">
               {bambuList.map((printer) => (
                 <button
+                  type="button"
                   key={printer.device_id || printer.prefix}
                   onClick={() => registerBambu(printer)}
                   className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left transition-colors hover:bg-accent"

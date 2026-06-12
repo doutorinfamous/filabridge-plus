@@ -96,8 +96,17 @@ export const api = {
     }),
 
   // Spoolman
-  testSpoolman: () =>
-    request<{ connected: boolean }>("/api/spoolman/test"),
+  testSpoolman: (credentials?: {
+    spoolman_url: string;
+    spoolman_username?: string;
+    spoolman_password?: string;
+  }) =>
+    credentials
+      ? request<{ connected: boolean }>("/api/spoolman/test", {
+          method: "POST",
+          body: JSON.stringify(credentials),
+        })
+      : request<{ connected: boolean }>("/api/spoolman/test"),
 
   // Config
   getConfig: () => request<Record<string, string>>("/api/config"),

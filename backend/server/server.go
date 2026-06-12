@@ -105,6 +105,7 @@ func (ws *WebServer) setupRoutes() {
 		api.POST("/map_toolhead", ws.mapToolheadHandler)
 		api.GET("/available_spools", ws.availableSpoolsHandler)
 		api.GET("/spoolman/test", ws.testSpoolmanConnectionHandler)
+		api.POST("/spoolman/test", ws.testSpoolmanConnectionHandler)
 		api.GET("/spoolman/debug", ws.debugSpoolmanHandler)
 		api.POST("/test/print_complete", ws.testPrintCompleteHandler)
 		api.GET("/config", ws.getConfigHandler)

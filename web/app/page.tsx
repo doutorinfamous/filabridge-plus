@@ -2,17 +2,20 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CloudOff, PlugZap, Printer, Wifi, WifiOff } from "lucide-react";
+import {
+  CloudOff,
+  Database,
+  PlugZap,
+  Printer,
+  Settings,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 
 import { api } from "@/lib/api";
 import type { BambuPrinter, PrinterConfigInfo } from "@/lib/types";
 import { usePollInterval } from "@/lib/use-poll-interval";
 import { useStatusSocket } from "@/lib/use-status-socket";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +42,9 @@ export default function DashboardPage() {
   const [bambuError, setBambuError] = React.useState<string | null>(null);
   const [spoolmanOk, setSpoolmanOk] = React.useState<boolean | null>(null);
   const [spoolmanUrl, setSpoolmanUrl] = React.useState<string>("");
+  const [spoolmanConfigured, setSpoolmanConfigured] = React.useState<
+    boolean | null
+  >(null);
 
   const loadPrinters = React.useCallback(async () => {
     try {
@@ -70,9 +76,11 @@ export default function DashboardPage() {
         .catch(() => setSpoolmanOk(false));
       api
         .getConfig()
-        .then((cfg) =>
-          setSpoolmanUrl((cfg.spoolman_url ?? "").replace(/\/$/, ""))
-        )
+        .then((cfg) => {
+          const url = (cfg.spoolman_url ?? "").replace(/\/$/, "");
+          setSpoolmanUrl(url);
+          setSpoolmanConfigured(url !== "");
+        })
         .catch(() => undefined);
     }, 0);
     const timer = setInterval(loadBambu, intervalMs);
@@ -125,18 +133,53 @@ export default function DashboardPage() {
         </Badge>
       </header>
 
-      {spoolmanOk === false && (
-        <Alert className="border-warning/40 bg-warning/10 text-warning">
-          <CloudOff className="size-4" />
-          <AlertTitle>Spoolman unreachable</AlertTitle>
-          <AlertDescription className="text-warning/90">
-            Could not connect to Spoolman. Check the URL in{" "}
-            <Link href="/settings" className="underline underline-offset-2">
-              Settings
-            </Link>
-            .
-          </AlertDescription>
-        </Alert>
+      {spoolmanConfigured === false ? (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="items-center text-center">
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10">
+              <Database className="size-7 text-primary" />
+            </div>
+            <CardTitle className="text-lg">Connect Spoolman</CardTitle>
+            <CardDescription className="max-w-md">
+              Spoolman is the filament inventory at the heart of FilaBridge —
+              it is essential for tracking spools and debiting filament usage.
+              Set it up to get started.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center pb-8">
+            <Button asChild>
+              <Link href="/settings?tab=spoolman">
+                <Settings className="size-4" />
+                Configure Spoolman
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        spoolmanConfigured === true &&
+        spoolmanOk === false && (
+          <Card className="border-warning/40 bg-warning/5">
+            <CardHeader className="items-center text-center">
+              <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-warning/40 bg-warning/10">
+                <CloudOff className="size-7 text-warning" />
+              </div>
+              <CardTitle className="text-lg">Spoolman is unreachable</CardTitle>
+              <CardDescription className="max-w-md">
+                FilaBridge needs a working Spoolman connection to track spools
+                and debit filament usage. Could not connect to the configured
+                URL — make sure Spoolman is running and the address is correct.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex justify-center pb-8">
+              <Button asChild>
+                <Link href="/settings?tab=spoolman">
+                  <Settings className="size-4" />
+                  Check Spoolman settings
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )
       )}
 
       <PrintErrors errors={printErrors} onChanged={onChanged} />

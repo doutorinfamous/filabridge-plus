@@ -13,6 +13,7 @@ import (
 	"filabridge/bambu"
 	"filabridge/core"
 	"filabridge/snapmaker"
+	"filabridge/spoolman"
 )
 
 // statusHandler returns current status as JSON.
@@ -576,8 +577,32 @@ func (ws *WebServer) detectPrinterHandler(c *gin.Context) {
 }
 
 // testSpoolmanConnectionHandler tests the connection to Spoolman.
+// GET tests the currently active (saved) configuration. POST accepts
+// credentials in the body so the UI can test unsaved form values.
 func (ws *WebServer) testSpoolmanConnectionHandler(c *gin.Context) {
-	if err := ws.bridge.Spoolman.TestConnection(); err != nil {
+	client := ws.bridge.Spoolman
+
+	if c.Request.Method == http.MethodPost {
+		var req struct {
+			SpoolmanURL      string `json:"spoolman_url"`
+			SpoolmanUsername string `json:"spoolman_username"`
+			SpoolmanPassword string `json:"spoolman_password"`
+		}
+		_ = c.ShouldBindJSON(&req)
+
+		url := strings.TrimSpace(req.SpoolmanURL)
+		if url == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "spoolman_url is required", "connected": false})
+			return
+		}
+		timeout := core.SpoolmanTimeout
+		if ws.bridge.Config != nil && ws.bridge.Config.SpoolmanTimeout > 0 {
+			timeout = ws.bridge.Config.SpoolmanTimeout
+		}
+		client = spoolman.NewClient(url, timeout, req.SpoolmanUsername, req.SpoolmanPassword)
+	}
+
+	if err := client.TestConnection(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "connected": false})
 		return
 	}

@@ -11,6 +11,7 @@ import type {
   DevDbTable,
   DevDbTableData,
   NfcUrlEntry,
+  NfcSessionStatus,
   PrintError,
   PrintHistoryResponse,
   PrintJob,
@@ -207,6 +208,8 @@ export const api = {
     request<{ urls: NfcUrlEntry[] | null; spoolman_url: string }>(
       "/api/nfc/urls"
     ),
+  getNfcSessionStatus: () =>
+    request<NfcSessionStatus>("/api/nfc/session/status"),
 
   // Dev DB (temporary debug)
   getDevDbTables: () =>

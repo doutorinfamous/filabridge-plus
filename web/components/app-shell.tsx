@@ -32,6 +32,10 @@ const tempNavItems = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
+  if (pathname.startsWith("/nfc/scan")) {
+    return <>{children}</>;
+  }
+
   return (
     <div className="flex min-h-svh">
       {/* Sidebar */}

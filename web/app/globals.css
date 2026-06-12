@@ -109,3 +109,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes scan-beam {
+  0%,
+  100% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  30%,
+  70% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(200%);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}

@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/base64"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	neturl "net/url"
@@ -20,86 +19,163 @@ import (
 	"filabridge/spoolman"
 )
 
-// Minimal server-rendered pages for the NFC scan flow. Physical NFC tags point
-// directly at /api/nfc/assign, so this endpoint must answer with browsable HTML
-// even though the rest of the UI lives in the Next.js app.
-const nfcPageTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{.Title}} - FilaBridge</title>
-<style>
-:root { color-scheme: dark; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #09090b; color: #fafafa; margin: 0; padding: 20px; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-.card { background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 40px; text-align: center; max-width: 480px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-.icon { font-size: 56px; margin-bottom: 16px; }
-h1 { font-size: 24px; margin: 0 0 12px; }
-.msg { color: #a1a1aa; font-size: 16px; line-height: 1.5; margin-bottom: 24px; }
-.details { background: #09090b; border: 1px solid #27272a; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px; text-align: left; }
-.row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #27272a; font-size: 14px; }
-.row:last-child { border-bottom: none; }
-.label { color: #a1a1aa; font-weight: 600; }
-.steps { text-align: left; margin-bottom: 24px; }
-.step { display: flex; align-items: center; gap: 12px; padding: 10px 0; font-size: 15px; }
-.btn { display: inline-block; background: #fafafa; color: #09090b; text-decoration: none; font-weight: 600; padding: 12px 28px; border-radius: 10px; font-size: 15px; }
-</style>
-</head>
-<body>
-<div class="card">
-<div class="icon">{{.Icon}}</div>
-<h1>{{.Title}}</h1>
-{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}
-{{if .Steps}}<div class="steps">{{range .Steps}}<div class="step"><span>{{.Icon}}</span><span>{{.Text}}</span></div>{{end}}</div>{{end}}
-{{if .Details}}<div class="details">{{range .Details}}<div class="row"><span class="label">{{.Label}}</span><span>{{.Value}}</span></div>{{end}}</div>{{end}}
-<a href="/" class="btn">Back to Dashboard</a>
-</div>
-</body>
-</html>`
+const nfcScanPath = "/nfc/scan"
 
-var nfcPageTmpl = template.Must(template.New("nfc").Parse(nfcPageTemplate))
-
-type nfcPageStep struct {
-	Icon string
-	Text string
-}
-
-type nfcPageDetail struct {
-	Label string
-	Value string
-}
-
-type nfcPageData struct {
-	Title   string
-	Icon    string
-	Message string
-	Steps   []nfcPageStep
-	Details []nfcPageDetail
-}
-
-func renderNFCPage(c *gin.Context, status int, data nfcPageData) {
-	c.Status(status)
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	if err := nfcPageTmpl.Execute(c.Writer, data); err != nil {
-		log.Printf("Error rendering NFC page: %v", err)
+func redirectNFCScan(c *gin.Context, query neturl.Values) {
+	target := nfcScanPath
+	if len(query) > 0 {
+		target += "?" + query.Encode()
 	}
+	c.Redirect(http.StatusFound, target)
 }
 
-func renderNFCError(c *gin.Context, status int, message string) {
-	renderNFCPage(c, status, nfcPageData{
-		Title:   "NFC Error",
-		Icon:    "⚠️",
-		Message: message,
-	})
+func redirectNFCScanError(c *gin.Context, message string) {
+	q := neturl.Values{}
+	q.Set("error", message)
+	redirectNFCScan(c, q)
 }
 
-// nfcAssignHandler handles NFC tag scans.
+func redirectNFCScanSuccess(c *gin.Context, ws *WebServer, session *nfc.Session, toolheadDisplayName string) {
+	q := neturl.Values{}
+	q.Set("success", "1")
+	q.Set("spool_id", strconv.Itoa(session.SpoolID))
+
+	spoolMeta := buildNFCSessionSpoolMeta(ws, session.SpoolID)
+	if name, ok := spoolMeta["name"].(string); ok && name != "" {
+		q.Set("spool_name", name)
+	}
+	if material, ok := spoolMeta["material"].(string); ok && material != "" {
+		q.Set("spool_material", material)
+	}
+	if brand, ok := spoolMeta["brand"].(string); ok && brand != "" {
+		q.Set("spool_brand", brand)
+	}
+	if color, ok := spoolMeta["color_hex"].(string); ok && color != "" {
+		q.Set("spool_color", color)
+	}
+	if weight, ok := spoolMeta["remaining_weight"].(float64); ok && weight > 0 {
+		q.Set("spool_weight", strconv.FormatFloat(weight, 'f', 0, 64))
+	}
+
+	if bambu.IsBambuLocation(session.LocationName) {
+		q.Set("location_type", "ams_slot")
+		q.Set("location", session.LocationName)
+		if idx := strings.Index(session.LocationName, " - "); idx >= 0 {
+			q.Set("printer", session.LocationName[:idx])
+			q.Set("slot", strings.TrimSpace(session.LocationName[idx+3:]))
+		}
+	} else if session.IsPrinterLocation && session.PrinterName != "" {
+		q.Set("location_type", "toolhead")
+		q.Set("location", session.LocationName)
+		q.Set("printer", session.PrinterName)
+		q.Set("toolhead", toolheadDisplayName)
+	} else {
+		q.Set("location_type", "storage")
+		q.Set("location", session.LocationName)
+	}
+
+	redirectNFCScan(c, q)
+}
+
+func spoolColorHex(spool *spoolman.Spool) string {
+	if spool == nil || spool.Filament == nil || spool.Filament.ColorHex == "" {
+		return ""
+	}
+	colorHex := spool.Filament.ColorHex
+	if !strings.HasPrefix(colorHex, "#") {
+		colorHex = "#" + colorHex
+	}
+	return colorHex
+}
+
+func buildNFCSessionSpoolMeta(ws *WebServer, spoolID int) gin.H {
+	spool, err := ws.bridge.Spoolman.GetSpool(spoolID)
+	if err != nil {
+		log.Printf("Warning: failed to load spool %d for NFC session: %v", spoolID, err)
+		return gin.H{
+			"id": spoolID,
+		}
+	}
+
+	meta := gin.H{
+		"id":       spool.ID,
+		"name":     spool.Name,
+		"material": spool.Material,
+		"brand":    spool.Brand,
+	}
+	if color := spoolColorHex(spool); color != "" {
+		meta["color_hex"] = color
+	}
+	if spool.RemainingWeight > 0 {
+		meta["remaining_weight"] = spool.RemainingWeight
+	}
+	return meta
+}
+
+func resolveToolheadDisplayName(ws *WebServer, session *nfc.Session) string {
+	toolheadDisplayName := core.DefaultToolheadDisplayName(session.ToolheadID)
+	printerConfigs, err := ws.bridge.GetAllPrinterConfigs()
+	if err != nil {
+		return toolheadDisplayName
+	}
+	for printerID, cfg := range printerConfigs {
+		if cfg.Name == session.PrinterName {
+			if name, nameErr := ws.bridge.GetToolheadName(printerID, session.ToolheadID); nameErr == nil {
+				return name
+			}
+			break
+		}
+	}
+	return toolheadDisplayName
+}
+
+func buildNFCSessionLocationMeta(ws *WebServer, session *nfc.Session) gin.H {
+	if !session.HasLocation {
+		return nil
+	}
+
+	locationType := "storage"
+	displayName := session.LocationName
+	meta := gin.H{
+		"name":         session.LocationName,
+		"display_name": displayName,
+		"location_type": locationType,
+	}
+
+	if bambu.IsBambuLocation(session.LocationName) {
+		meta["location_type"] = "ams_slot"
+		if idx := strings.Index(session.LocationName, " - "); idx >= 0 {
+			meta["printer_name"] = session.LocationName[:idx]
+			meta["display_name"] = strings.TrimSpace(session.LocationName[idx+3:])
+		}
+		return meta
+	}
+
+	if session.IsPrinterLocation && session.PrinterName != "" {
+		meta["location_type"] = "toolhead"
+		meta["printer_name"] = session.PrinterName
+		meta["toolhead_display_name"] = resolveToolheadDisplayName(ws, session)
+		if idx := strings.Index(session.LocationName, " - "); idx >= 0 {
+			meta["display_name"] = strings.TrimSpace(session.LocationName[idx+3:])
+		}
+		return meta
+	}
+
+	if printerName, toolheadDisplayName, ok := ws.bridge.ParseVirtualToolheadLocation(session.LocationName); ok {
+		meta["location_type"] = "toolhead"
+		meta["printer_name"] = printerName
+		meta["toolhead_display_name"] = toolheadDisplayName
+	}
+
+	return meta
+}
+
+// nfcAssignHandler handles NFC tag scans and redirects to the Next.js scan UI.
 func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 	spoolIDStr := c.Query("spool")
 	locationStr := c.Query("location")
 	clientIP := nfc.ClientIP(c.ClientIP())
 
-	// Generate session ID based on client IP
 	sessionID := nfc.SessionIDForIP(clientIP)
 
 	var spoolID int
@@ -110,7 +186,7 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 	if spoolIDStr != "" {
 		spoolID, err = strconv.Atoi(spoolIDStr)
 		if err != nil {
-			renderNFCError(c, http.StatusBadRequest, "Invalid spool ID")
+			redirectNFCScanError(c, "Invalid spool ID")
 			return
 		}
 	}
@@ -122,11 +198,11 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 		if bambu.IsBambuLocation(locationStr) {
 			tray, parseErr := bambu.ParseLocation(ws.bridge, locationStr)
 			if parseErr != nil {
-				renderNFCError(c, http.StatusBadRequest, parseErr.Error())
+				redirectNFCScanError(c, parseErr.Error())
 				return
 			}
 			if tray == nil {
-				renderNFCError(c, http.StatusBadRequest, "Bambu tray not found for location")
+				redirectNFCScanError(c, "Bambu tray not found for location")
 				return
 			}
 			locationName = locationStr
@@ -134,7 +210,7 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 		} else {
 			printerName, toolheadID, locationName, isPrinterLocation, err = nfc.ParseLocationParam(ws.bridge, locationStr)
 			if err != nil {
-				renderNFCError(c, http.StatusBadRequest, err.Error())
+				redirectNFCScanError(c, err.Error())
 				return
 			}
 		}
@@ -142,16 +218,15 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 
 	session, err := nfc.CreateOrUpdateSession(ws.bridge, sessionID, spoolID, printerName, toolheadID, locationName, isPrinterLocation)
 	if err != nil {
-		renderNFCError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())
+		redirectNFCScanError(c, "Failed to create session: "+err.Error())
 		return
 	}
 
 	if session.IsComplete() {
-		var err error
 		if bambu.IsBambuLocation(session.LocationName) {
 			tray, trayErr := bambu.ParseLocation(ws.bridge, session.LocationName)
 			if trayErr != nil || tray == nil {
-				renderNFCError(c, http.StatusInternalServerError, "Failed to resolve Bambu tray location")
+				redirectNFCScanError(c, "Failed to resolve Bambu tray location")
 				return
 			}
 			err = bambu.AssignSpoolToTray(ws.bridge, session.SpoolID, tray.UniqueID, session.LocationName)
@@ -159,86 +234,21 @@ func (ws *WebServer) nfcAssignHandler(c *gin.Context) {
 			err = ws.bridge.AssignSpoolToLocation(session.SpoolID, session.PrinterName, session.ToolheadID, session.LocationName, session.IsPrinterLocation)
 		}
 		if err != nil {
-			renderNFCError(c, http.StatusInternalServerError, "Assignment failed: "+err.Error())
+			redirectNFCScanError(c, "Assignment failed: "+err.Error())
 			return
 		}
 
 		ws.BroadcastStatus()
 
+		toolheadDisplayName := resolveToolheadDisplayName(ws, session)
+
 		nfc.DeleteSession(ws.bridge, sessionID)
 
-		toolheadDisplayName := core.DefaultToolheadDisplayName(session.ToolheadID)
-		printerConfigs, err := ws.bridge.GetAllPrinterConfigs()
-		if err == nil {
-			for printerID, cfg := range printerConfigs {
-				if cfg.Name == session.PrinterName {
-					if name, nameErr := ws.bridge.GetToolheadName(printerID, session.ToolheadID); nameErr == nil {
-						toolheadDisplayName = name
-					}
-					break
-				}
-			}
-		}
-
-		details := []nfcPageDetail{
-			{Label: "Spool ID", Value: strconv.Itoa(session.SpoolID)},
-		}
-		if bambu.IsBambuLocation(session.LocationName) {
-			if idx := strings.Index(session.LocationName, " - "); idx >= 0 {
-				details = append(details,
-					nfcPageDetail{Label: "Printer", Value: session.LocationName[:idx]},
-					nfcPageDetail{Label: "Slot", Value: strings.TrimSpace(session.LocationName[idx+3:])},
-				)
-			} else {
-				details = append(details, nfcPageDetail{Label: "Location", Value: session.LocationName})
-			}
-		} else if session.IsPrinterLocation && session.PrinterName != "" {
-			details = append(details,
-				nfcPageDetail{Label: "Printer", Value: session.PrinterName},
-				nfcPageDetail{Label: "Toolhead", Value: toolheadDisplayName},
-			)
-		} else {
-			details = append(details, nfcPageDetail{Label: "Location", Value: session.LocationName})
-		}
-
-		renderNFCPage(c, http.StatusOK, nfcPageData{
-			Title:   "Assignment Complete!",
-			Icon:    "✅",
-			Message: "Spool has been successfully assigned.",
-			Details: details,
-		})
+		redirectNFCScanSuccess(c, ws, session, toolheadDisplayName)
 		return
 	}
 
-	// Session not complete, show progress
-	var message string
-	if session.HasSpool && !session.HasLocation {
-		message = fmt.Sprintf("Spool %d selected. Now scan a location tag.", session.SpoolID)
-	} else if session.HasLocation && !session.HasSpool {
-		message = fmt.Sprintf("Location '%s' selected. Now scan a spool tag.", session.LocationName)
-	} else {
-		message = "Session started. Scan a spool or location tag."
-	}
-
-	spoolStep := nfcPageStep{Icon: "⭕", Text: "Scan spool tag"}
-	if session.HasSpool {
-		spoolStep.Icon = "✅"
-	} else if !session.HasLocation {
-		spoolStep.Icon = "⏳"
-	}
-	locationStep := nfcPageStep{Icon: "⭕", Text: "Scan location tag"}
-	if session.HasLocation {
-		locationStep.Icon = "✅"
-	} else if session.HasSpool {
-		locationStep.Icon = "⏳"
-	}
-
-	renderNFCPage(c, http.StatusOK, nfcPageData{
-		Title:   "NFC Scan Progress",
-		Icon:    "📱",
-		Message: message,
-		Steps:   []nfcPageStep{spoolStep, locationStep},
-	})
+	redirectNFCScan(c, nil)
 }
 
 // normalizeNFCLocationName lowercases and removes spaces for dedup comparisons.
@@ -249,13 +259,7 @@ func normalizeNFCLocationName(name string) string {
 func buildSpoolNFCURL(baseURL string, spool spoolman.Spool) gin.H {
 	url := fmt.Sprintf("%s/api/nfc/assign?spool=%d", baseURL, spool.ID)
 
-	colorHex := ""
-	if spool.Filament != nil && spool.Filament.ColorHex != "" {
-		colorHex = spool.Filament.ColorHex
-		if !strings.HasPrefix(colorHex, "#") {
-			colorHex = "#" + colorHex
-		}
-	}
+	colorHex := spoolColorHex(&spool)
 
 	entry := gin.H{
 		"type":             "spool",
@@ -328,7 +332,6 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		urls = append(urls, buildSpoolNFCURL(baseURL, spool))
 	}
 
-	// Bambu AMS slot NFC URLs (canonical entries for printer slots)
 	bambuLocationNames := make(map[string]struct{})
 	if bambuURLs, err := bambu.GenerateNFCURLs(ws.bridge, baseURL); err == nil {
 		for _, entry := range bambuURLs {
@@ -339,7 +342,6 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		}
 	}
 
-	// Moonraker toolhead NFC URLs (canonical entries for all configured toolheads)
 	toolheadLocationNames := make(map[string]struct{})
 	if toolheadURLs, err := core.GenerateToolheadNFCURLs(ws.bridge, baseURL); err == nil {
 		for _, entry := range toolheadURLs {
@@ -358,7 +360,6 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		spoolmanLocations = []spoolman.Location{}
 	}
 
-	// Spoolman storage locations only — skip slots already covered by Bambu entries
 	for _, location := range spoolmanLocations {
 		if location.Archived {
 			continue
@@ -381,7 +382,6 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 		urls = append(urls, buildSpoolmanLocationNFCEntry(baseURL, location, ws.bridge))
 	}
 
-	// Sort URLs: spools first, then locations alphabetically by display name
 	sort.Slice(urls, func(i, j int) bool {
 		typeI := urls[i]["type"].(string)
 		typeJ := urls[j]["type"].(string)
@@ -423,7 +423,7 @@ func (ws *WebServer) nfcUrlsHandler(c *gin.Context) {
 	})
 }
 
-// nfcSessionStatusHandler returns the current session status.
+// nfcSessionStatusHandler returns the current session status with enriched metadata.
 func (ws *WebServer) nfcSessionStatusHandler(c *gin.Context) {
 	clientIP := nfc.ClientIP(c.ClientIP())
 	sessionID := nfc.SessionIDForIP(clientIP)
@@ -436,7 +436,7 @@ func (ws *WebServer) nfcSessionStatusHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"active":              true,
 		"session_id":          session.SessionID,
 		"has_spool":           session.HasSpool,
@@ -447,5 +447,14 @@ func (ws *WebServer) nfcSessionStatusHandler(c *gin.Context) {
 		"location_name":       session.LocationName,
 		"is_printer_location": session.IsPrinterLocation,
 		"expires_at":          session.ExpiresAt,
-	})
+	}
+
+	if session.HasSpool {
+		resp["spool"] = buildNFCSessionSpoolMeta(ws, session.SpoolID)
+	}
+	if session.HasLocation {
+		resp["location"] = buildNFCSessionLocationMeta(ws, session)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

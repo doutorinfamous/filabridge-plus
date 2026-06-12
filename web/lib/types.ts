@@ -178,6 +178,32 @@ export interface NfcUrlEntry {
   tray_unique_id?: string;
 }
 
+export interface NfcSessionSpool {
+  id: number;
+  name?: string;
+  material?: string;
+  brand?: string;
+  color_hex?: string;
+  remaining_weight?: number;
+}
+
+export interface NfcSessionLocation {
+  name: string;
+  display_name: string;
+  location_type: "storage" | "ams_slot" | "toolhead";
+  printer_name?: string;
+  toolhead_display_name?: string;
+}
+
+export interface NfcSessionStatus {
+  active: boolean;
+  has_spool?: boolean;
+  has_location?: boolean;
+  spool?: NfcSessionSpool;
+  location?: NfcSessionLocation;
+  expires_at?: string;
+}
+
 export interface LocationEntry {
   name: string;
   type: string;

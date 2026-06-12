@@ -23,8 +23,59 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WriteNfcButton } from "@/components/nfc/write-nfc-button";
+import { SpoolDot } from "@/components/spool-select";
 
 type NfcTab = "spool" | "filament" | "location";
+
+function normalizeHexColor(hex: string): string {
+  const trimmed = hex.trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
+function parseColorHex(hex?: string): string[] {
+  if (!hex?.trim()) return ["#71717a"];
+
+  const raw = hex.trim().startsWith("#") ? hex.trim().slice(1) : hex.trim();
+  const parts = raw.split(/[,;|/]+/).map((part) => normalizeHexColor(part));
+  const colors = parts.filter(Boolean);
+
+  return colors.length > 0 ? colors : ["#71717a"];
+}
+
+function FilamentColorSwatch({
+  hex,
+  className,
+}: {
+  hex?: string;
+  className?: string;
+}) {
+  const colors = parseColorHex(hex);
+
+  if (colors.length === 1) {
+    return <SpoolDot color={colors[0]} className={cn("size-4", className)} />;
+  }
+
+  const gradient =
+    colors.length === 2
+      ? `linear-gradient(135deg, ${colors[0]} 50%, ${colors[1]} 50%)`
+      : `conic-gradient(${colors
+          .map(
+            (color, index) =>
+              `${color} ${(index * 100) / colors.length}% ${((index + 1) * 100) / colors.length}%`
+          )
+          .join(", ")})`;
+
+  return (
+    <span
+      className={cn(
+        "inline-block size-4 shrink-0 rounded-full ring-1 ring-white/20",
+        className
+      )}
+      style={{ background: gradient }}
+    />
+  );
+}
 
 function bambuPrinterName(entry: NfcUrlEntry): string {
   if (entry.printer_name?.trim()) return entry.printer_name.trim();
@@ -77,16 +128,6 @@ function entryKey(entry: NfcUrlEntry): string {
   return `${entry.type}-${entry.spool_id ?? entry.filament_id ?? entry.display_name ?? entry.location_name ?? entry.url}`;
 }
 
-function ColorDot({ hex }: { hex?: string }) {
-  const color = hex ? (hex.startsWith("#") ? hex : `#${hex}`) : "#52525b";
-  return (
-    <span
-      className="size-3 shrink-0 rounded-full ring-1 ring-white/20"
-      style={{ backgroundColor: color }}
-    />
-  );
-}
-
 export default function NfcPage() {
   const [entries, setEntries] = React.useState<NfcUrlEntry[] | null>(null);
   const [spoolmanUrl, setSpoolmanUrl] = React.useState("");
@@ -94,6 +135,7 @@ export default function NfcPage() {
   const [search, setSearch] = React.useState("");
   const [selected, setSelected] = React.useState<NfcUrlEntry | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const qrPanelRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     api
@@ -119,6 +161,13 @@ export default function NfcPage() {
       return haystack.includes(search.trim().toLowerCase());
     });
   }, [entries, tab, search]);
+
+  React.useEffect(() => {
+    if (!selected || !qrPanelRef.current) return;
+    if (window.matchMedia("(min-width: 1024px)").matches) return;
+
+    qrPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selected]);
 
   const copyUrl = async (url: string) => {
     try {
@@ -169,9 +218,9 @@ export default function NfcPage() {
         </TabsList>
       </Tabs>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         {/* List */}
-        <Card className="border-border/70 bg-card/60 py-0">
+        <Card className="min-w-0 border-border/70 bg-card/60 py-0">
           <CardContent className="p-3">
             <div className="relative mb-3">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -182,7 +231,7 @@ export default function NfcPage() {
                 className="pl-9"
               />
             </div>
-            <ScrollArea className="h-[480px] pr-2">
+            <ScrollArea className="h-52 w-full min-w-0 pr-2 sm:h-72 lg:h-[480px] [&>[data-slot=scroll-area-viewport]>div]:!block [&>[data-slot=scroll-area-viewport]>div]:min-w-0 [&>[data-slot=scroll-area-viewport]>div]:w-full">
               {entries === null ? (
                 <div className="space-y-2">
                   {Array.from({ length: 6 }).map((_, i) => (
@@ -203,15 +252,18 @@ export default function NfcPage() {
                         key={entryKey(entry)}
                         onClick={() => setSelected(entry)}
                         className={cn(
-                          "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                          "flex w-full min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
                           isSelected
                             ? "border-primary/40 bg-accent"
                             : "border-transparent hover:bg-accent/50"
                         )}
                       >
-                        <ColorDot hex={entry.color_hex} />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium">
+                        <FilamentColorSwatch
+                          hex={entry.color_hex}
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="line-clamp-2 text-sm font-medium leading-snug">
                             {entryTitle(entry)}
                           </span>
                           <span className="block truncate text-xs text-muted-foreground">
@@ -228,17 +280,26 @@ export default function NfcPage() {
         </Card>
 
         {/* QR display */}
-        <Card className="border-border/70 bg-card/60">
-          <CardContent className="flex min-h-[520px] flex-col items-center justify-center gap-5 p-6">
+        <Card
+          ref={qrPanelRef}
+          className="min-w-0 overflow-hidden border-border/70 bg-card/60"
+        >
+          <CardContent className="flex w-full min-w-0 flex-col items-center justify-center gap-5 p-4 sm:p-6 lg:min-h-[520px]">
             {selected ? (
               <>
-                <div className="text-center">
-                  <h3 className="text-lg font-semibold">
-                    {entryTitle(selected)}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">
-                    {entrySubtitle(selected)}
-                  </p>
+                <div className="flex w-full max-w-md min-w-0 items-start gap-3">
+                  <FilamentColorSwatch
+                    hex={selected.color_hex}
+                    className="mt-1 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="line-clamp-2 text-lg font-semibold leading-snug">
+                      {entryTitle(selected)}
+                    </h3>
+                    <p className="truncate text-sm text-muted-foreground">
+                      {entrySubtitle(selected)}
+                    </p>
+                  </div>
                 </div>
                 {selected.qr_code_base64 ? (
                   <div className="rounded-2xl bg-white p-4 shadow-lg">
@@ -256,8 +317,8 @@ export default function NfcPage() {
                     QR unavailable for this item.
                   </p>
                 )}
-                <div className="flex w-full max-w-md items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
+                <div className="grid w-full max-w-md min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                  <code className="block min-w-0 truncate rounded-lg border border-border bg-background/60 px-3 py-2 text-xs">
                     {selected.url}
                   </code>
                   <Button

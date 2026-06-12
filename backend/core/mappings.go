@@ -19,8 +19,8 @@ func (b *FilamentBridge) GetToolheadMapping(printerID string, toolheadID int) (i
 func (b *FilamentBridge) getToolheadMappingLocked(printerID string, toolheadID int) (int, error) {
 	var spoolID int
 	err := b.DB.QueryRow(
-		"SELECT COALESCE(spool_id, 0) FROM toolhead_mappings WHERE printer_id = ? AND toolhead_id = ?",
-		printerID, toolheadID,
+		"SELECT COALESCE(spool_id, 0) FROM printer_slots WHERE slot_id = ?",
+		ToolheadSlotID(printerID, toolheadID),
 	).Scan(&spoolID)
 
 	if err == sql.ErrNoRows {
@@ -52,10 +52,10 @@ func (b *FilamentBridge) SetToolheadMapping(printerID string, toolheadID int, sp
 	}
 
 	_, err = b.DB.Exec(`
-		INSERT INTO toolhead_mappings (printer_id, toolhead_id, spool_id, mapped_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(printer_id, toolhead_id) DO UPDATE SET spool_id = excluded.spool_id, mapped_at = excluded.mapped_at
-	`, printerID, toolheadID, spoolID, time.Now())
+		INSERT INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, spool_id, mapped_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(slot_id) DO UPDATE SET spool_id = excluded.spool_id, mapped_at = excluded.mapped_at
+	`, ToolheadSlotID(printerID, toolheadID), printerID, SlotTypeToolhead, toolheadID, spoolID, time.Now())
 	if err != nil {
 		b.Mutex.Unlock()
 		return fmt.Errorf("failed to set toolhead mapping: %w", err)
@@ -140,8 +140,8 @@ func (b *FilamentBridge) TryAutoAssignSpoolToDefaultStorage(spoolID int) {
 // GetToolheadMappings gets all toolhead mappings for a printer (keyed by toolhead ID).
 func (b *FilamentBridge) GetToolheadMappings(printerID string) (map[int]ToolheadMapping, error) {
 	rows, err := b.DB.Query(
-		"SELECT toolhead_id, COALESCE(spool_id, 0), display_name, mapped_at FROM toolhead_mappings WHERE printer_id = ?",
-		printerID,
+		"SELECT toolhead_id, COALESCE(spool_id, 0), display_name, mapped_at FROM printer_slots WHERE printer_id = ? AND slot_type = ?",
+		printerID, SlotTypeToolhead,
 	)
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func (b *FilamentBridge) GetToolheadMappings(printerID string) (map[int]Toolhead
 	for rows.Next() {
 		var toolheadID, spoolID int
 		var displayName string
-		var mappedAt time.Time
+		var mappedAt sql.NullTime
 		if err := rows.Scan(&toolheadID, &spoolID, &displayName, &mappedAt); err != nil {
 			return nil, err
 		}
@@ -160,7 +160,7 @@ func (b *FilamentBridge) GetToolheadMappings(printerID string) (map[int]Toolhead
 			PrinterID:   printerID,
 			ToolheadID:  toolheadID,
 			SpoolID:     spoolID,
-			MappedAt:    mappedAt,
+			MappedAt:    mappedAt.Time,
 			DisplayName: displayName,
 		}
 	}
@@ -171,7 +171,8 @@ func (b *FilamentBridge) GetToolheadMappings(printerID string) (map[int]Toolhead
 // GetAllToolheadMappings gets all toolhead mappings across all printers (keyed by printer ID).
 func (b *FilamentBridge) GetAllToolheadMappings() (map[string]map[int]ToolheadMapping, error) {
 	rows, err := b.DB.Query(
-		"SELECT printer_id, toolhead_id, COALESCE(spool_id, 0), display_name, mapped_at FROM toolhead_mappings ORDER BY printer_id, toolhead_id",
+		"SELECT printer_id, toolhead_id, COALESCE(spool_id, 0), display_name, mapped_at FROM printer_slots WHERE slot_type = ? ORDER BY printer_id, toolhead_id",
+		SlotTypeToolhead,
 	)
 	if err != nil {
 		return nil, err
@@ -182,7 +183,7 @@ func (b *FilamentBridge) GetAllToolheadMappings() (map[string]map[int]ToolheadMa
 	for rows.Next() {
 		var printerID, displayName string
 		var toolheadID, spoolID int
-		var mappedAt time.Time
+		var mappedAt sql.NullTime
 		if err := rows.Scan(&printerID, &toolheadID, &spoolID, &displayName, &mappedAt); err != nil {
 			return nil, err
 		}
@@ -195,7 +196,7 @@ func (b *FilamentBridge) GetAllToolheadMappings() (map[string]map[int]ToolheadMa
 			PrinterID:   printerID,
 			ToolheadID:  toolheadID,
 			SpoolID:     spoolID,
-			MappedAt:    mappedAt,
+			MappedAt:    mappedAt.Time,
 			DisplayName: displayName,
 		}
 	}
@@ -208,11 +209,7 @@ func (b *FilamentBridge) UnmapToolhead(printerID string, toolheadID int) error {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
 
-	_, err := b.DB.Exec(
-		"UPDATE toolhead_mappings SET spool_id = NULL, mapped_at = ? WHERE printer_id = ? AND toolhead_id = ?",
-		time.Now(), printerID, toolheadID,
-	)
-	if err != nil {
+	if err := b.ClearSlotSpool(ToolheadSlotID(printerID, toolheadID)); err != nil {
 		return fmt.Errorf("failed to unmap toolhead: %w", err)
 	}
 

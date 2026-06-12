@@ -49,6 +49,20 @@ const (
 	DriverBambuHA   = "bambu_ha"
 )
 
+// Printer slot types (printer_slots.slot_type). A slot is any assignable
+// filament position on a printer: a Moonraker toolhead, a Bambu AMS tray or
+// an external spool holder. Future printer types add new slot types here.
+const (
+	SlotTypeToolhead = "toolhead"
+	SlotTypeAMSTray  = "ams_tray"
+	SlotTypeExternal = "external"
+)
+
+// ConfigKeySlotsTrayBackfillDone tracks whether tray spool assignments were
+// backfilled from Spoolman (extra.active_tray) into printer_slots after the
+// v3 schema migration.
+const ConfigKeySlotsTrayBackfillDone = "slots_tray_backfill_done"
+
 // HTTP timeouts
 const (
 	PrinterTimeout             = 10  // seconds

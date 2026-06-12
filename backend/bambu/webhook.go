@@ -130,6 +130,29 @@ func logWebhookResult(event, trayID string, result WebhookResult) {
 	}
 }
 
+// findAssignedSpoolForTray resolves the spool assigned to a tray. printer_slots
+// is the source of truth; the legacy Spoolman extra.active_tray lookup is kept
+// as a fallback (self-healing the local slot when it hits).
+func findAssignedSpoolForTray(b *core.FilamentBridge, trayRef, trayUniqueID string) (*spoolman.Spool, error) {
+	spoolID, err := FindSpoolIDForTrayLocal(b, trayUniqueID)
+	if err != nil {
+		return nil, err
+	}
+	if spoolID > 0 {
+		return b.Spoolman.GetSpool(spoolID)
+	}
+
+	spool, err := b.Spoolman.FindSpoolByActiveTray(trayRef, trayUniqueID)
+	if err != nil || spool == nil {
+		return nil, err
+	}
+	printerID, _ := FindTrayPrinterID(b, trayUniqueID)
+	if err := b.SetSlotSpool(trayUniqueID, printerID, core.SlotTypeAMSTray, "", spool.ID); err != nil {
+		log.Printf("Warning: failed to self-heal local slot for tray %s: %v", trayUniqueID, err)
+	}
+	return spool, nil
+}
+
 // resolveTrayUniqueID maps a HA entity_id (or unique_id) to the tray unique_id stored in Spoolman.
 func resolveTrayUniqueID(b *core.FilamentBridge, trayRef string, ha *homeassistant.Client, idMap map[string]string) string {
 	if trayRef == "" {
@@ -169,7 +192,7 @@ func processSpoolUsage(b *core.FilamentBridge, payload WebhookPayload, ha *homea
 
 	trayUniqueID := resolveTrayUniqueID(b, payload.ActiveTrayID, ha, idMap)
 
-	spool, err := b.Spoolman.FindSpoolByActiveTray(payload.ActiveTrayID, trayUniqueID)
+	spool, err := findAssignedSpoolForTray(b, payload.ActiveTrayID, trayUniqueID)
 	if err != nil {
 		return WebhookResult{Status: "error", Message: err.Error()}
 	}
@@ -222,7 +245,7 @@ func processTrayChange(b *core.FilamentBridge, payload WebhookPayload, ha *homea
 	trayEmpty := name == "" || strings.EqualFold(name, "empty") || name == "unavailable"
 
 	if trayEmpty {
-		spool, err := b.Spoolman.FindSpoolByActiveTray(payload.TrayEntityID, trayUniqueID)
+		spool, err := findAssignedSpoolForTray(b, payload.TrayEntityID, trayUniqueID)
 		if err != nil {
 			return WebhookResult{Status: "error", Message: err.Error()}
 		}
@@ -247,7 +270,11 @@ func processTrayChange(b *core.FilamentBridge, payload WebhookPayload, ha *homea
 		return WebhookResult{Status: "ignored", Reason: "no spool found for RFID tag"}
 	}
 
-	if err := b.Spoolman.AssignSpoolToTray(spool.ID, trayUniqueID); err != nil {
+	displayName := ""
+	if tray, err := FindTrayByUniqueID(b, trayUniqueID); err == nil && tray != nil {
+		displayName = tray.DisplayName
+	}
+	if err := AssignSpoolToTray(b, spool.ID, trayUniqueID, displayName); err != nil {
 		return WebhookResult{Status: "error", Message: err.Error()}
 	}
 

@@ -157,12 +157,12 @@ func (b *FilamentBridge) attachJobUsage(jobs []PrintJobRecord, jobIndex map[int6
 		       COALESCE(bt.display_name, ''),
 		       COALESCE(tm.display_name, '')
 		FROM filament_usage u
-		LEFT JOIN bambu_trays bt ON bt.tray_unique_id = u.tray_unique_id
-		LEFT JOIN toolhead_mappings tm ON tm.printer_id = u.printer_id AND tm.toolhead_id = u.toolhead_id
+		LEFT JOIN printer_slots bt ON bt.slot_id = u.tray_unique_id
+		LEFT JOIN printer_slots tm ON tm.printer_id = u.printer_id AND tm.toolhead_id = u.toolhead_id AND tm.slot_type = '%s'
 		WHERE u.job_id IN (%s)
 		GROUP BY u.job_id, u.toolhead_id, u.tray_unique_id, u.spool_id
 		ORDER BY u.job_id, u.toolhead_id, u.tray_unique_id
-	`, placeholders)
+	`, SlotTypeToolhead, placeholders)
 
 	rows, err := b.DB.Query(query, ids...)
 	if err != nil {

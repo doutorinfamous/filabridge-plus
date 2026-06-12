@@ -19,8 +19,8 @@ func (b *FilamentBridge) GetToolheadName(printerID string, toolheadID int) (stri
 
 	var displayName string
 	err := b.DB.QueryRow(
-		"SELECT display_name FROM toolhead_mappings WHERE printer_id = ? AND toolhead_id = ?",
-		printerID, toolheadID,
+		"SELECT display_name FROM printer_slots WHERE slot_id = ?",
+		ToolheadSlotID(printerID, toolheadID),
 	).Scan(&displayName)
 
 	if err == sql.ErrNoRows || (err == nil && displayName == "") {
@@ -67,10 +67,10 @@ func (b *FilamentBridge) SetToolheadName(printerID string, toolheadID int, name 
 
 	b.Mutex.Lock()
 	_, err = b.DB.Exec(`
-		INSERT INTO toolhead_mappings (printer_id, toolhead_id, display_name)
-		VALUES (?, ?, ?)
-		ON CONFLICT(printer_id, toolhead_id) DO UPDATE SET display_name = excluded.display_name
-	`, printerID, toolheadID, name)
+		INSERT INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, display_name)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(slot_id) DO UPDATE SET display_name = excluded.display_name
+	`, ToolheadSlotID(printerID, toolheadID), printerID, SlotTypeToolhead, toolheadID, name)
 	b.Mutex.Unlock()
 
 	if err != nil {
@@ -114,8 +114,8 @@ func (b *FilamentBridge) GetAllToolheadNames(printerID string) (map[int]string, 
 	defer b.Mutex.RUnlock()
 
 	rows, err := b.DB.Query(
-		"SELECT toolhead_id, display_name FROM toolhead_mappings WHERE printer_id = ? AND display_name != '' ORDER BY toolhead_id",
-		printerID,
+		"SELECT toolhead_id, display_name FROM printer_slots WHERE printer_id = ? AND slot_type = ? AND display_name != '' ORDER BY toolhead_id",
+		printerID, SlotTypeToolhead,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get toolhead names: %w", err)

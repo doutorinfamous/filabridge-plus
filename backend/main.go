@@ -50,6 +50,15 @@ func main() {
 		log.Fatalf("Failed to update bridge config: %v", err)
 	}
 
+	// One-time backfill of Bambu tray spool assignments (Spoolman
+	// extra.active_tray -> printer_slots.spool_id) after the v3 migration.
+	// Retried on the next startup when Spoolman is unreachable.
+	go func() {
+		if err := bridge.BackfillTraySpoolAssignments(); err != nil {
+			log.Printf("Warning: %v", err)
+		}
+	}()
+
 	// Override port from DB config only when the flag was not set explicitly.
 	// Explicit --port always wins (the Docker entrypoint pins the internal port).
 	if !portFlagSet && config.WebPort != "" && config.WebPort != core.DefaultWebPort {

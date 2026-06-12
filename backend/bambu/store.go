@@ -79,14 +79,11 @@ func NewHAClientFromCredentials(url, token string) (*homeassistant.Client, error
 	return homeassistant.NewClient(url, token), nil
 }
 
-// SyncTrays updates the local tray cache for a registered Bambu printer.
+// SyncTrays updates the local tray slots for a registered Bambu printer.
+// Existing spool assignments (printer_slots.spool_id) are preserved.
 func SyncTrays(b *core.FilamentBridge, printerID string, printer Printer) error {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
-
-	if _, err := b.DB.Exec("DELETE FROM bambu_trays WHERE printer_id = ?", printerID); err != nil {
-		return err
-	}
 
 	configs, _ := b.GetAllPrinterConfigs()
 	printerName := ""
@@ -94,20 +91,33 @@ func SyncTrays(b *core.FilamentBridge, printerID string, printer Printer) error 
 		printerName = cfg.Name
 	}
 
-	insert := func(tray Tray, isExternal bool) error {
+	seen := make([]string, 0)
+	upsert := func(tray Tray, isExternal bool) error {
 		displayName := tray.DisplayName
 		if displayName == "" && printerName != "" {
 			displayName = FormatTrayDisplayName(printerName, tray.AMSNumber, tray.TrayNumber, isExternal)
 		}
+		slotType := core.SlotTypeAMSTray
+		if isExternal {
+			slotType = core.SlotTypeExternal
+		}
+		seen = append(seen, tray.UniqueID)
 		_, err := b.DB.Exec(`
-			INSERT INTO bambu_trays (printer_id, tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external)
+			INSERT INTO printer_slots (slot_id, printer_id, slot_type, entity_id, ams_number, tray_number, display_name)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, printerID, tray.UniqueID, tray.EntityID, tray.AMSNumber, tray.TrayNumber, displayName, boolToInt(isExternal))
+			ON CONFLICT(slot_id) DO UPDATE SET
+				printer_id = excluded.printer_id,
+				slot_type = excluded.slot_type,
+				entity_id = excluded.entity_id,
+				ams_number = excluded.ams_number,
+				tray_number = excluded.tray_number,
+				display_name = excluded.display_name
+		`, tray.UniqueID, printerID, slotType, tray.EntityID, tray.AMSNumber, tray.TrayNumber, displayName)
 		return err
 	}
 
 	for _, ext := range printer.ExternalSpools {
-		if err := insert(ext, true); err != nil {
+		if err := upsert(ext, true); err != nil {
 			return err
 		}
 	}
@@ -115,27 +125,56 @@ func SyncTrays(b *core.FilamentBridge, printerID string, printer Printer) error 
 		for _, tray := range ams.Trays {
 			t := tray
 			t.AMSNumber = ams.AMSNumber
-			if err := insert(t, false); err != nil {
+			if err := upsert(t, false); err != nil {
 				return err
 			}
 		}
 	}
+
+	// Drop tray slots that no longer exist on the printer.
+	args := []interface{}{printerID, core.SlotTypeAMSTray, core.SlotTypeExternal}
+	placeholders := ""
+	for i, id := range seen {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id)
+	}
+	query := "DELETE FROM printer_slots WHERE printer_id = ? AND slot_type IN (?, ?)"
+	if len(seen) > 0 {
+		query += " AND slot_id NOT IN (" + placeholders + ")"
+	}
+	if _, err := b.DB.Exec(query, args...); err != nil {
+		return err
+	}
 	return nil
 }
 
-func boolToInt(v bool) int {
-	if v {
-		return 1
+const traySelectColumns = `slot_id, entity_id, ams_number, tray_number, display_name, slot_type, COALESCE(spool_id, 0)`
+
+func scanTray(row interface{ Scan(...interface{}) error }) (Tray, error) {
+	var tray Tray
+	var slotType string
+	var spoolID int
+	err := row.Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &slotType, &spoolID)
+	if err != nil {
+		return tray, err
 	}
-	return 0
+	tray.IsExternal = slotType == core.SlotTypeExternal
+	if spoolID > 0 {
+		tray.AssignedSpoolID = &spoolID
+	}
+	return tray, nil
 }
 
 // GetTraysForPrinter returns cached trays for a printer.
 func GetTraysForPrinter(b *core.FilamentBridge, printerID string) ([]Tray, error) {
-	rows, err := b.DB.Query(`
-		SELECT tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external
-		FROM bambu_trays WHERE printer_id = ? ORDER BY ams_number, tray_number
-	`, printerID)
+	rows, err := b.DB.Query(fmt.Sprintf(`
+		SELECT %s FROM printer_slots
+		WHERE printer_id = ? AND slot_type IN (?, ?)
+		ORDER BY ams_number, tray_number
+	`, traySelectColumns), printerID, core.SlotTypeAMSTray, core.SlotTypeExternal)
 	if err != nil {
 		return nil, err
 	}
@@ -143,58 +182,45 @@ func GetTraysForPrinter(b *core.FilamentBridge, printerID string) ([]Tray, error
 
 	var trays []Tray
 	for rows.Next() {
-		var tray Tray
-		var isExternal int
-		if err := rows.Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &isExternal); err != nil {
+		tray, err := scanTray(rows)
+		if err != nil {
 			return nil, err
 		}
-		tray.IsExternal = isExternal == 1
 		trays = append(trays, tray)
 	}
 	return trays, nil
 }
 
-// FindTrayByUniqueID looks up a tray by unique_id.
-func FindTrayByUniqueID(b *core.FilamentBridge, trayUniqueID string) (*Tray, error) {
-	var tray Tray
-	var isExternal int
-	err := b.DB.QueryRow(`
-		SELECT tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external
-		FROM bambu_trays WHERE tray_unique_id = ?
-	`, trayUniqueID).Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &isExternal)
+func findTray(b *core.FilamentBridge, where string, arg interface{}) (*Tray, error) {
+	row := b.DB.QueryRow(fmt.Sprintf(`
+		SELECT %s FROM printer_slots
+		WHERE slot_type IN (?, ?) AND %s
+	`, traySelectColumns, where), core.SlotTypeAMSTray, core.SlotTypeExternal, arg)
+	tray, err := scanTray(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	tray.IsExternal = isExternal == 1
 	return &tray, nil
+}
+
+// FindTrayByUniqueID looks up a tray by unique_id.
+func FindTrayByUniqueID(b *core.FilamentBridge, trayUniqueID string) (*Tray, error) {
+	return findTray(b, "slot_id = ?", trayUniqueID)
 }
 
 // FindTrayByEntityID looks up a tray by Home Assistant entity_id.
 func FindTrayByEntityID(b *core.FilamentBridge, entityID string) (*Tray, error) {
-	var tray Tray
-	var isExternal int
-	err := b.DB.QueryRow(`
-		SELECT tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external
-		FROM bambu_trays WHERE entity_id = ?
-	`, entityID).Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &isExternal)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	tray.IsExternal = isExternal == 1
-	return &tray, nil
+	return findTray(b, "entity_id = ?", entityID)
 }
 
 // FindTrayPrinterID returns the printer_id owning a tray (empty when unknown).
 func FindTrayPrinterID(b *core.FilamentBridge, trayUniqueID string) (string, error) {
 	var printerID string
 	err := b.DB.QueryRow(
-		"SELECT printer_id FROM bambu_trays WHERE tray_unique_id = ?",
+		"SELECT printer_id FROM printer_slots WHERE slot_id = ?",
 		trayUniqueID,
 	).Scan(&printerID)
 	if err == sql.ErrNoRows {
@@ -228,20 +254,7 @@ func FindPrinterIDByPrefix(b *core.FilamentBridge, prefix string) (string, error
 
 // FindTrayByDisplayName resolves a display name to tray unique_id.
 func FindTrayByDisplayName(b *core.FilamentBridge, displayName string) (*Tray, error) {
-	var tray Tray
-	var isExternal int
-	err := b.DB.QueryRow(`
-		SELECT tray_unique_id, entity_id, ams_number, tray_number, display_name, is_external
-		FROM bambu_trays WHERE display_name = ?
-	`, displayName).Scan(&tray.UniqueID, &tray.EntityID, &tray.AMSNumber, &tray.TrayNumber, &tray.DisplayName, &isExternal)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	tray.IsExternal = isExternal == 1
-	return &tray, nil
+	return findTray(b, "display_name = ?", displayName)
 }
 
 // RegisterPrinter saves a discovered Bambu printer in FilaBridge.
@@ -271,6 +284,6 @@ func RemovePrinter(b *core.FilamentBridge, printerID string) error {
 	if err := b.DeletePrinterConfig(printerID); err != nil {
 		return err
 	}
-	_, err := b.DB.Exec("DELETE FROM bambu_trays WHERE printer_id = ?", printerID)
+	_, err := b.DB.Exec("DELETE FROM printer_slots WHERE printer_id = ?", printerID)
 	return err
 }

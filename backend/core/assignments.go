@@ -1,7 +1,6 @@
 package core
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 
@@ -15,45 +14,47 @@ type ExcludeAssignment struct {
 	TrayUniqueID string
 }
 
-// GetAssignedSpoolIDs returns spool IDs in use across Moonraker toolheads and Bambu AMS trays.
-func (b *FilamentBridge) GetAssignedSpoolIDs(exclude ExcludeAssignment) (map[int]bool, error) {
-	assigned := make(map[int]bool)
-
-	mappings, err := b.GetAllToolheadMappings()
-	if err != nil {
-		return nil, err
+// slotID resolves the exclusion to a printer_slots key (empty when unset).
+func (e ExcludeAssignment) slotID() string {
+	if e.TrayUniqueID != "" {
+		return e.TrayUniqueID
 	}
-	for printerID, printerMappings := range mappings {
-		for toolheadID, mapping := range printerMappings {
-			if mapping.SpoolID <= 0 {
-				continue
-			}
-			if exclude.PrinterID != "" && printerID == exclude.PrinterID && toolheadID == exclude.ToolheadID {
-				continue
-			}
-			assigned[mapping.SpoolID] = true
-		}
+	if e.PrinterID != "" {
+		return ToolheadSlotID(e.PrinterID, e.ToolheadID)
 	}
-
-	spools, err := b.Spoolman.GetAllSpools()
-	if err != nil {
-		return nil, err
-	}
-	for i := range spools {
-		trayID := spoolman.GetSpoolExtraString(&spools[i], spoolman.ExtraFieldActiveTray)
-		if trayID == "" {
-			continue
-		}
-		if exclude.TrayUniqueID != "" && trayID == exclude.TrayUniqueID {
-			continue
-		}
-		assigned[spools[i].ID] = true
-	}
-
-	return assigned, nil
+	return ""
 }
 
-// GetAvailableSpools returns spools not assigned to any toolhead or Bambu tray.
+// GetAssignedSpoolIDs returns spool IDs in use across all printer slots
+// (Moonraker toolheads and Bambu AMS trays).
+func (b *FilamentBridge) GetAssignedSpoolIDs(exclude ExcludeAssignment) (map[int]bool, error) {
+	excludeSlotID := exclude.slotID()
+
+	rows, err := b.DB.Query(
+		"SELECT slot_id, spool_id FROM printer_slots WHERE spool_id IS NOT NULL AND spool_id > 0",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assigned spools: %w", err)
+	}
+	defer rows.Close()
+
+	assigned := make(map[int]bool)
+	for rows.Next() {
+		var slotID string
+		var spoolID int
+		if err := rows.Scan(&slotID, &spoolID); err != nil {
+			return nil, fmt.Errorf("failed to scan assigned spool row: %w", err)
+		}
+		if excludeSlotID != "" && slotID == excludeSlotID {
+			continue
+		}
+		assigned[spoolID] = true
+	}
+
+	return assigned, rows.Err()
+}
+
+// GetAvailableSpools returns spools not assigned to any printer slot.
 func (b *FilamentBridge) GetAvailableSpools(exclude ExcludeAssignment) ([]spoolman.Spool, error) {
 	allSpools, err := b.Spoolman.GetAllSpools()
 	if err != nil {
@@ -74,29 +75,58 @@ func (b *FilamentBridge) GetAvailableSpools(exclude ExcludeAssignment) ([]spoolm
 	return available, nil
 }
 
-func (b *FilamentBridge) findToolheadAssignmentForSpool(spoolID int) (printerID string, toolheadID int, found bool, err error) {
-	b.Mutex.RLock()
-	defer b.Mutex.RUnlock()
-
-	return b.findToolheadAssignmentForSpoolLocked(spoolID)
-}
-
-// findToolheadAssignmentForSpoolLocked must be called with b.Mutex already held.
-func (b *FilamentBridge) findToolheadAssignmentForSpoolLocked(spoolID int) (printerID string, toolheadID int, found bool, err error) {
-	err = b.DB.QueryRow(
-		"SELECT printer_id, toolhead_id FROM toolhead_mappings WHERE spool_id = ? LIMIT 1",
-		spoolID,
-	).Scan(&printerID, &toolheadID)
-	if err == sql.ErrNoRows {
-		return "", 0, false, nil
-	}
+// EnsureSpoolNotAssignedElsewhere fails when the spool is already mapped to
+// another printer slot (unless excluded).
+func (b *FilamentBridge) EnsureSpoolNotAssignedElsewhere(spoolID int, exclude ExcludeAssignment) error {
+	slots, err := b.FindSlotsBySpool(spoolID)
 	if err != nil {
-		return "", 0, false, err
+		return err
 	}
-	return printerID, toolheadID, true, nil
+
+	excludeSlotID := exclude.slotID()
+	for _, slot := range slots {
+		if excludeSlotID != "" && slot.SlotID == excludeSlotID {
+			continue
+		}
+		if slot.SlotType == SlotTypeToolhead && slot.ToolheadID != nil {
+			return fmt.Errorf("spool %d is already assigned to %s toolhead %d", spoolID, b.ResolvePrinterDisplayName(slot.PrinterID), *slot.ToolheadID)
+		}
+		return fmt.Errorf("spool %d is already assigned to Bambu tray %s", spoolID, slot.SlotID)
+	}
+
+	return nil
 }
 
-func (b *FilamentBridge) findBambuTrayAssignmentForSpool(spoolID int) (trayUniqueID string, found bool, err error) {
+// RelocateSpoolFromPreviousAssignments clears all slot bindings for spoolID
+// before a new explicit assignment. The keep target is excluded from clearing.
+// SQLite is the source of truth; the Spoolman extra.active_tray mirror is
+// cleared best-effort.
+func (b *FilamentBridge) RelocateSpoolFromPreviousAssignments(spoolID int, keep ExcludeAssignment) error {
+	cleared, err := b.ClearSpoolFromSlots(spoolID, keep.slotID())
+	if err != nil {
+		return fmt.Errorf("failed to clear previous slot assignments: %w", err)
+	}
+	for _, slot := range cleared {
+		log.Printf("Cleared spool %d from %s slot %s during relocation", spoolID, slot.PrinterID, slot.SlotID)
+	}
+
+	// Mirror: clear stale active_tray in Spoolman (covers slots cleared above
+	// and legacy assignments that only exist on the Spoolman side).
+	if trayID, found, err := b.findSpoolmanActiveTray(spoolID); err != nil {
+		log.Printf("Warning: could not check Spoolman active_tray for spool %d during relocation: %v", spoolID, err)
+	} else if found {
+		if keep.TrayUniqueID == "" || trayID != keep.TrayUniqueID {
+			if err := b.Spoolman.UnassignSpoolFromTray(spoolID); err != nil {
+				log.Printf("Warning: failed to clear Spoolman active_tray for spool %d: %v", spoolID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// findSpoolmanActiveTray returns the tray id stored in Spoolman extra.active_tray.
+func (b *FilamentBridge) findSpoolmanActiveTray(spoolID int) (trayUniqueID string, found bool, err error) {
 	spool, err := b.Spoolman.GetSpool(spoolID)
 	if err != nil {
 		return "", false, err
@@ -106,83 +136,6 @@ func (b *FilamentBridge) findBambuTrayAssignmentForSpool(spoolID int) (trayUniqu
 		return "", false, nil
 	}
 	return trayID, true, nil
-}
-
-// EnsureSpoolNotAssignedElsewhere fails when the spool is already mapped to another
-// Moonraker toolhead or Bambu tray (unless excluded).
-func (b *FilamentBridge) EnsureSpoolNotAssignedElsewhere(spoolID int, exclude ExcludeAssignment) error {
-	return b.ensureSpoolNotAssignedElsewhere(spoolID, exclude, false)
-}
-
-// ensureSpoolNotAssignedElsewhereLocked is the variant for callers that already
-// hold b.Mutex (RWMutex is not reentrant).
-func (b *FilamentBridge) ensureSpoolNotAssignedElsewhereLocked(spoolID int, exclude ExcludeAssignment) error {
-	return b.ensureSpoolNotAssignedElsewhere(spoolID, exclude, true)
-}
-
-func (b *FilamentBridge) ensureSpoolNotAssignedElsewhere(spoolID int, exclude ExcludeAssignment, mutexHeld bool) error {
-	find := b.findToolheadAssignmentForSpool
-	if mutexHeld {
-		find = b.findToolheadAssignmentForSpoolLocked
-	}
-
-	if printerID, toolheadID, found, err := find(spoolID); err != nil {
-		return err
-	} else if found {
-		if exclude.PrinterID != "" && printerID == exclude.PrinterID && toolheadID == exclude.ToolheadID {
-			return nil
-		}
-		return fmt.Errorf("spool %d is already assigned to %s toolhead %d", spoolID, b.ResolvePrinterDisplayName(printerID), toolheadID)
-	}
-
-	if trayID, found, err := b.findBambuTrayAssignmentForSpool(spoolID); err != nil {
-		// Spoolman unreachable or spool unknown there — skip the Bambu tray
-		// conflict check instead of blocking the local mapping.
-		log.Printf("Warning: could not check Bambu tray assignment for spool %d: %v", spoolID, err)
-	} else if found {
-		if exclude.TrayUniqueID != "" && trayID == exclude.TrayUniqueID {
-			return nil
-		}
-		return fmt.Errorf("spool %d is already assigned to Bambu tray %s", spoolID, trayID)
-	}
-
-	return nil
-}
-
-// RelocateSpoolFromPreviousAssignments clears Moonraker toolhead and Bambu tray
-// bindings for spoolID before a new explicit assignment. The keep target is
-// excluded from clearing.
-func (b *FilamentBridge) RelocateSpoolFromPreviousAssignments(spoolID int, keep ExcludeAssignment) error {
-	allMappings, err := b.GetAllToolheadMappings()
-	if err != nil {
-		return fmt.Errorf("failed to get toolhead mappings: %w", err)
-	}
-
-	for printerID, printerMappings := range allMappings {
-		for toolheadID, mapping := range printerMappings {
-			if mapping.SpoolID != spoolID {
-				continue
-			}
-			if keep.PrinterID != "" && printerID == keep.PrinterID && toolheadID == keep.ToolheadID {
-				continue
-			}
-			if err := b.UnmapToolhead(printerID, toolheadID); err != nil {
-				log.Printf("Warning: Failed to unmap spool %d from %s toolhead %d during relocation: %v", spoolID, printerID, toolheadID, err)
-			}
-		}
-	}
-
-	if trayID, found, err := b.findBambuTrayAssignmentForSpool(spoolID); err != nil {
-		log.Printf("Warning: could not check Bambu tray assignment for spool %d during relocation: %v", spoolID, err)
-	} else if found {
-		if keep.TrayUniqueID == "" || trayID != keep.TrayUniqueID {
-			if err := b.Spoolman.UnassignSpoolFromTray(spoolID); err != nil {
-				return fmt.Errorf("failed to unassign spool %d from Bambu tray: %w", spoolID, err)
-			}
-		}
-	}
-
-	return nil
 }
 
 // AssignSpoolToLocation assigns a spool to a location and updates Spoolman.
@@ -235,28 +188,6 @@ func (b *FilamentBridge) AssignSpoolToLocation(spoolID int, printerName string, 
 		}
 
 		log.Printf("Successfully assigned spool %d to location '%s'", spoolID, locationName)
-	}
-
-	return nil
-}
-
-// clearSpoolFromAllToolheads removes a spool from all toolhead mappings.
-func (b *FilamentBridge) clearSpoolFromAllToolheads(spoolID int) error {
-	allMappings, err := b.GetAllToolheadMappings()
-	if err != nil {
-		return fmt.Errorf("failed to get toolhead mappings: %w", err)
-	}
-
-	for printerID, printerMappings := range allMappings {
-		for toolheadID, mapping := range printerMappings {
-			if mapping.SpoolID == spoolID {
-				if err := b.UnmapToolhead(printerID, toolheadID); err != nil {
-					log.Printf("Warning: Failed to unmap spool %d from %s toolhead %d: %v", spoolID, printerID, toolheadID, err)
-				} else {
-					log.Printf("Cleared spool %d from %s toolhead %d", spoolID, printerID, toolheadID)
-				}
-			}
-		}
 	}
 
 	return nil

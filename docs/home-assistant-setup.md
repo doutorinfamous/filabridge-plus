@@ -71,7 +71,7 @@ No dashboard **Bambu Lab Printers**, use o dropdown em cada slot AMS para atribu
 1. Gere tag NFC do **spool** na aba NFC
 2. Gere tag NFC do **slot AMS** (seção AMS Slots)
 3. Escaneie: primeiro o spool, depois o slot
-4. O FilaBridge grava `extra.active_tray` no Spoolman com o `unique_id` da bandeja HA
+4. O FilaBridge grava o `spool_id` no slot (tabela `printer_slots`) e espelha `extra.active_tray` no Spoolman
 
 Formato da location AMS:
 
@@ -90,7 +90,7 @@ Formato da location AMS:
 | Troca física de bobina (RFID) | `tray_change` | Auto-atribui spool pelo `extra.tag` aprendido |
 | Bandeja vazia (`name=Empty`) | `tray_change` | Desatribui spool da bandeja |
 
-O mapeamento bobina ↔ bandeja fica no Spoolman em `extra.active_tray` (valor = `unique_id` da entidade HA).
+O mapeamento bobina ↔ bandeja fica no banco do FilaBridge (tabela `printer_slots`, coluna `spool_id` — mesma tabela usada pelos toolheads Moonraker). O Spoolman recebe um espelho em `extra.active_tray` (valor = `unique_id` da entidade HA) para fins de visualização.
 
 > **Importante:** os eventos `print_started`/`print_finished` e o registro de histórico exigem o package YAML atualizado. Se você instalou o package antes dessa versão, **regenere o HA Config no FilaBridge e substitua o arquivo em `packages/`**, depois reinicie o HA. Com o YAML antigo, o débito no Spoolman continua funcionando, mas o histórico agrupa o consumo em jobs criados automaticamente sem nome de arquivo.
 
@@ -172,7 +172,7 @@ Checklist pós-reinício: use **Validar HA** no FilaBridge ou confirme as 4 enti
 ### Peso não deduzido
 
 - Verifique automações `filabridge_update_spool_*` ativas no HA
-- Confirme bobina atribuída ao slot (`extra.active_tray` no Spoolman)
+- Confirme bobina atribuída ao slot no dashboard do FilaBridge (o espelho `extra.active_tray` aparece no Spoolman)
 - Veja logs do HA em **Configurações → Sistema → Logs**
 
 A automação **não chama o webhook durante o print** — só no **fim** (`print_status` → `finish`/`idle`) ou na **troca de bandeja**. Durante a impressão, monitore se estes sensores sobem:

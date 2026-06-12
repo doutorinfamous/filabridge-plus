@@ -137,6 +137,14 @@ func (b *FilamentBridge) migrateToolheadNamesV2() error {
 	if !exists {
 		return nil
 	}
+	// toolhead_mappings may already have been folded into printer_slots (v3).
+	hasMappings, err := b.tableExists("toolhead_mappings")
+	if err != nil {
+		return err
+	}
+	if !hasMappings {
+		return nil
+	}
 
 	tx, err := b.DB.Begin()
 	if err != nil {
@@ -159,6 +167,107 @@ func (b *FilamentBridge) migrateToolheadNamesV2() error {
 		return err
 	}
 	log.Printf("Migration: toolhead_names merged into toolhead_mappings")
+	return nil
+}
+
+// migrateSchemaV3 merges toolhead_mappings and bambu_trays into the unified
+// printer_slots table:
+//   - toolhead_mappings: rows become slot_type='toolhead' slots (spool_id kept)
+//   - bambu_trays: rows become slot_type='ams_tray'/'external' slots; the
+//     spool assignment lives in Spoolman (extra.active_tray) and is backfilled
+//     later via BackfillTraySpoolAssignments
+func (b *FilamentBridge) migrateSchemaV3() error {
+	if err := b.migrateToolheadMappingsV3(); err != nil {
+		return fmt.Errorf("toolhead_mappings to printer_slots migration: %w", err)
+	}
+	if err := b.migrateBambuTraysV3(); err != nil {
+		return fmt.Errorf("bambu_trays to printer_slots migration: %w", err)
+	}
+	return nil
+}
+
+// migrateToolheadMappingsV3 copies toolhead_mappings into printer_slots and drops it.
+func (b *FilamentBridge) migrateToolheadMappingsV3() error {
+	exists, err := b.tableExists("toolhead_mappings")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	tx, err := b.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO printer_slots (slot_id, printer_id, slot_type, toolhead_id, display_name, spool_id, mapped_at)
+		SELECT printer_id || ':T' || toolhead_id, printer_id, ?, toolhead_id, display_name, spool_id, mapped_at
+		FROM toolhead_mappings
+	`, SlotTypeToolhead); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DROP TABLE toolhead_mappings"); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	log.Printf("Migration: toolhead_mappings merged into printer_slots")
+	return nil
+}
+
+// migrateBambuTraysV3 copies bambu_trays into printer_slots and drops it.
+// Tray spool assignments (Spoolman extra.active_tray) are backfilled on
+// startup once Spoolman is reachable.
+func (b *FilamentBridge) migrateBambuTraysV3() error {
+	exists, err := b.tableExists("bambu_trays")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	tx, err := b.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO printer_slots (slot_id, printer_id, slot_type, entity_id, ams_number, tray_number, display_name)
+		SELECT tray_unique_id, printer_id,
+		       CASE WHEN is_external = 1 THEN ? ELSE ? END,
+		       entity_id, ams_number, tray_number, display_name
+		FROM bambu_trays
+	`, SlotTypeExternal, SlotTypeAMSTray); err != nil {
+		return err
+	}
+
+	var migrated int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM bambu_trays").Scan(&migrated); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec("DROP TABLE bambu_trays"); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if migrated > 0 {
+		// Tray spool assignments still live in Spoolman; flag the backfill as pending.
+		if err := b.SetConfigValue(ConfigKeySlotsTrayBackfillDone, "false"); err != nil {
+			log.Printf("Warning: failed to flag tray spool backfill as pending: %v", err)
+		}
+	}
+	log.Printf("Migration: bambu_trays merged into printer_slots (%d tray(s))", migrated)
 	return nil
 }
 

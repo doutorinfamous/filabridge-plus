@@ -91,13 +91,18 @@ func (b *FilamentBridge) initDatabase() error {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE IF NOT EXISTS toolhead_mappings (
+		`CREATE TABLE IF NOT EXISTS printer_slots (
+			slot_id TEXT PRIMARY KEY,
 			printer_id TEXT NOT NULL,
-			toolhead_id INTEGER NOT NULL,
+			slot_type TEXT NOT NULL,
+			toolhead_id INTEGER,
+			entity_id TEXT,
+			ams_number INTEGER,
+			tray_number INTEGER,
 			display_name TEXT NOT NULL DEFAULT '',
 			spool_id INTEGER,
-			mapped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (printer_id, toolhead_id)
+			mapped_at TIMESTAMP,
+			UNIQUE (printer_id, toolhead_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS print_jobs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +158,11 @@ func (b *FilamentBridge) initDatabase() error {
 		return fmt.Errorf("failed to migrate database schema: %w", err)
 	}
 
+	// Merge toolhead_mappings + bambu_trays into the unified printer_slots table.
+	if err := b.migrateSchemaV3(); err != nil {
+		return fmt.Errorf("failed to migrate database schema to printer_slots: %w", err)
+	}
+
 	// Migrate existing FilaBridge locations to Spoolman
 	if err := b.migrateLocationsToSpoolman(); err != nil {
 		log.Printf("Warning: Failed to migrate locations to Spoolman: %v", err)
@@ -183,21 +193,6 @@ func (b *FilamentBridge) migrateBambuSchema() error {
 		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("failed to add column %s: %w", col.name, err)
 		}
-	}
-
-	_, err := b.DB.Exec(`
-		CREATE TABLE IF NOT EXISTS bambu_trays (
-			printer_id TEXT NOT NULL,
-			tray_unique_id TEXT PRIMARY KEY,
-			entity_id TEXT NOT NULL,
-			ams_number INTEGER NOT NULL DEFAULT 0,
-			tray_number INTEGER NOT NULL DEFAULT 0,
-			display_name TEXT NOT NULL,
-			is_external INTEGER NOT NULL DEFAULT 0
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create bambu_trays table: %w", err)
 	}
 
 	// HA package slugs must be lowercase — normalize any legacy uppercase prefixes

@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WriteNfcButton } from "@/components/nfc/write-nfc-button";
 
 type NfcTab = "spool" | "filament" | "location";
 
@@ -272,6 +273,8 @@ export default function NfcPage() {
                     )}
                   </Button>
                 </div>
+                {/* key resets the write state when another item is selected */}
+                <WriteNfcButton key={selected.url} url={selected.url} />
                 <ol className="max-w-md list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
                   <li>Open NFC Tools Pro on your phone</li>
                   <li>

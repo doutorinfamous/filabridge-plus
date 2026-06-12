@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             rel="noopener noreferrer"
             className="transition-colors hover:text-foreground"
           >
-            Made by Papai Nerd
+           created and maintained by Papai Nerd
           </Link>
         </div>
       </aside>

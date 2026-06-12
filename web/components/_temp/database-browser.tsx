@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { DevDbTable, DevDbTableData } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,7 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const PAGE_SIZE = 100;
-const REFRESH_MS = 5000;
+const REFRESH_MS = 20000;
 
 function formatCell(value: unknown): string {
   if (value == null) return "NULL";
@@ -195,13 +194,6 @@ export function DatabaseBrowser() {
 
   return (
     <div className="space-y-4">
-      <Alert className="border-amber-500/30 bg-amber-500/10">
-        <AlertDescription className="text-amber-200/90">
-          Temporary debug tool — read-only. Refreshes automatically every{" "}
-          {REFRESH_MS / 1000}s.
-        </AlertDescription>
-      </Alert>
-
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           {lastUpdated

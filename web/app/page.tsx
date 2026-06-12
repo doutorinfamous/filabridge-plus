@@ -18,13 +18,7 @@ import { usePollInterval } from "@/lib/use-poll-interval";
 import { useStatusSocket } from "@/lib/use-status-socket";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BambuPrinterCard } from "@/components/bambu-printer-card";
 import { PrintErrors } from "@/components/print-errors";
@@ -135,18 +129,20 @@ export default function DashboardPage() {
 
       {spoolmanConfigured === false ? (
         <Card className="border-primary/30 bg-primary/5">
-          <CardHeader className="items-center text-center">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10">
+          <CardContent className="flex flex-col items-center justify-center gap-5 py-14 text-center">
+            <div className="flex size-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10">
               <Database className="size-7 text-primary" />
             </div>
-            <CardTitle className="text-lg">Connect Spoolman</CardTitle>
-            <CardDescription className="max-w-md">
-              Spoolman is the filament inventory at the heart of FilaBridge —
-              it is essential for tracking spools and debiting filament usage.
-              Set it up to get started.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex justify-center pb-8">
+            <div className="mx-auto max-w-md space-y-2">
+              <p className="text-lg font-semibold leading-none">
+                Connect Spoolman
+              </p>
+              <p className="text-sm text-balance text-muted-foreground">
+                Spoolman is the filament inventory at the heart of FilaBridge —
+                it is essential for tracking spools and debiting filament usage.
+                Set it up to get started.
+              </p>
+            </div>
             <Button asChild>
               <Link href="/settings?tab=spoolman">
                 <Settings className="size-4" />
@@ -159,18 +155,20 @@ export default function DashboardPage() {
         spoolmanConfigured === true &&
         spoolmanOk === false && (
           <Card className="border-warning/40 bg-warning/5">
-            <CardHeader className="items-center text-center">
-              <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-warning/40 bg-warning/10">
+            <CardContent className="flex flex-col items-center justify-center gap-5 py-14 text-center">
+              <div className="flex size-14 items-center justify-center rounded-2xl border border-warning/40 bg-warning/10">
                 <CloudOff className="size-7 text-warning" />
               </div>
-              <CardTitle className="text-lg">Spoolman is unreachable</CardTitle>
-              <CardDescription className="max-w-md">
-                FilaBridge needs a working Spoolman connection to track spools
-                and debit filament usage. Could not connect to the configured
-                URL — make sure Spoolman is running and the address is correct.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex justify-center pb-8">
+              <div className="mx-auto max-w-md space-y-2">
+                <p className="text-lg font-semibold leading-none">
+                  Spoolman is unreachable
+                </p>
+                <p className="text-sm text-balance text-muted-foreground">
+                  FilaBridge needs a working Spoolman connection to track spools
+                  and debit filament usage. Could not connect to the configured
+                  URL — make sure Spoolman is running and the address is correct.
+                </p>
+              </div>
               <Button asChild>
                 <Link href="/settings?tab=spoolman">
                   <Settings className="size-4" />
@@ -191,18 +189,20 @@ export default function DashboardPage() {
         </div>
       ) : !hasAnyPrinter ? (
         <Card className="border-dashed border-border bg-card/40">
-          <CardHeader className="items-center text-center">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-border bg-background/60">
+          <CardContent className="flex flex-col items-center justify-center gap-5 py-14 text-center">
+            <div className="flex size-14 items-center justify-center rounded-2xl border border-border bg-background/60">
               <Printer className="size-7 text-muted-foreground" />
             </div>
-            <CardTitle className="text-lg">Welcome to FilaBridge</CardTitle>
-            <CardDescription className="max-w-md">
-              No printers configured yet. Add your Snapmaker U1 (Moonraker) or
-              Bambu Lab (Home Assistant) to start tracking filament usage
-              automatically.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex justify-center pb-8">
+            <div className="mx-auto max-w-md space-y-2">
+              <p className="text-lg font-semibold leading-none">
+                Welcome to FilaBridge
+              </p>
+              <p className="text-sm text-balance text-muted-foreground">
+                No printers configured yet. Add your Snapmaker U1 (Moonraker) or
+                Bambu Lab (Home Assistant) to start tracking filament usage
+                automatically.
+              </p>
+            </div>
             <Button asChild>
               <Link href="/settings?tab=printers">
                 <PlugZap className="size-4" />
@@ -214,7 +214,14 @@ export default function DashboardPage() {
       ) : (
         <div className="space-y-4">
           {bambuError && bambuPrinters.length === 0 && (
-            <p className="text-sm text-muted-foreground">Bambu: {bambuError}</p>
+            <Card className="border-warning/40 bg-warning/5">
+              <CardContent className="py-6 text-center">
+                <p className="text-sm text-balance text-muted-foreground">
+                  <span className="font-medium text-foreground">Bambu:</span>{" "}
+                  {bambuError}
+                </p>
+              </CardContent>
+            </Card>
           )}
           <div className="grid min-w-0 gap-4 md:grid-cols-2">
             {moonrakerEntries.map(([printerId, cfg]) => (

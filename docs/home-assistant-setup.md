@@ -1,118 +1,122 @@
-# Configuração Home Assistant — Bambu Lab + FilaBridge
+# Home Assistant Setup — Bambu Lab + FilaBridge+
 
-Este guia explica como conectar impressoras **Bambu Lab** ao FilaBridge via **Home Assistant** e a integração **ha-bambulab**, replicando o fluxo do SpoolmanSync dentro do FilaBridge.
+This guide explains how to connect **Bambu Lab** printers to FilaBridge+ via **Home Assistant** and the **ha-bambulab** integration, replicating the SpoolmanSync workflow inside FilaBridge+.
 
-## Pré-requisitos
+## Prerequisites
 
-- [Spoolman](https://github.com/Donkie/Spoolman) acessível na rede
-- [Home Assistant](https://www.home-assistant.io/) rodando
-- [HACS](https://hacs.xyz/) instalado no HA
-- Integração **[ha-bambulab](https://github.com/greghesp/ha-bambulab)** instalada via HACS
-- Impressora Bambu adicionada no Home Assistant (LAN ou Cloud)
-- FilaBridge acessível pelo HA na rede local
+- [Spoolman](https://github.com/Donkie/Spoolman) reachable on your network
+- [Home Assistant](https://www.home-assistant.io/) running
+- [HACS](https://hacs.xyz/) installed in HA
+- **[ha-bambulab](https://github.com/greghesp/ha-bambulab)** integration installed via HACS
+- Bambu printer added in Home Assistant (LAN or Cloud)
+- FilaBridge+ reachable by HA on the local network
 
-## 1. Instalar ha-bambulab no Home Assistant
+## 1. Install ha-bambulab in Home Assistant
 
-1. Abra HACS → Integrações → pesquise **Bambu Lab**
-2. Instale **ha-bambulab**
-3. Reinicie o Home Assistant
-4. Vá em **Configurações → Dispositivos e serviços → Adicionar integração → Bambu Lab**
-5. Siga o assistente (LAN ou conta Bambu Cloud)
-6. Confirme que aparecem entidades como:
+1. Open HACS → Integrations → search for **Bambu Lab**
+2. Install **ha-bambulab**
+3. Restart Home Assistant
+4. Go to **Settings → Devices & services → Add integration → Bambu Lab**
+5. Follow the wizard (LAN or Bambu Cloud account)
+6. Confirm entities appear such as:
    - `sensor.<prefix>_print_status`
    - `sensor.<prefix>_tray_1` … `tray_4`
-   - `sensor.<prefix>_external_spool` (se aplicável)
+   - `sensor.<prefix>_external_spool` (if applicable)
 
-## 2. Configurar FilaBridge
+## 2. Configure FilaBridge+
 
-1. Abra FilaBridge → **Settings → Basic Configuration**
-2. Na seção **Home Assistant**:
-   - **HA URL**: `http://IP_DO_HA:8123`
-   - **HA Token**: crie um Long-Lived Access Token em HA → Perfil → Tokens de acesso
-   - **FilaBridge Public URL**: URL que o HA alcança, ex: `http://192.168.1.20:5000`
-3. Clique **Test Connection** (usa os valores do formulário, mesmo antes de salvar)
-4. Clique **Save HA Settings** para persistir
+1. Open FilaBridge+ → **Settings → General**
+2. In the **Home Assistant** section:
+   - **HA URL**: `http://HA_IP:8123`
+   - **HA Token**: create a Long-Lived Access Token in HA → Profile → Long-Lived Access Tokens
+   - **FilaBridge+ Public URL**: URL HA can reach, e.g. `http://192.168.1.20:5000`
+3. Click **Test connection** (uses form values, even before saving)
+4. Click **Save** to persist
 
-> **Importante:** Se o HA estiver em outra máquina, não use `localhost` na URL pública do FilaBridge.
+> **Important:** If HA runs on another machine, do not use `localhost` for the FilaBridge+ public URL.
 
-## 3. Registrar impressora Bambu no FilaBridge
+## 3. Register Bambu printer in FilaBridge+
 
-1. **Settings → Printers → Add Bambu Lab (HA)**
-2. Selecione a impressora descoberta
-3. A impressora aparece no dashboard **Bambu Lab Printers**
+1. **Settings → Printers → Bambu Lab (HA)**
+2. Select the discovered printer
+3. The printer appears on the dashboard under Bambu Lab printers
 
-## 4. Gerar e instalar automações no HA
+## 4. Generate and install HA automations
 
-1. No dashboard ou em Settings → Printers, clique **Generate HA Config**
-2. Salve o arquivo YAML baixado em `config/packages/filabridge_<prefix>.yaml` no Home Assistant  
-   O nome do arquivo é **sempre em minúsculas** (ex.: `filabridge_03919c461204338.yaml`, não `filabridge_03919C461204338.yaml`)
-3. Em `configuration.yaml`, garanta:
+1. On the dashboard or in Settings → Printers, click **HA package**
+2. Save the downloaded YAML to `config/packages/filabridge_<prefix>.yaml` in Home Assistant  
+   The filename is **always lowercase** (e.g. `filabridge_03919c461204338.yaml`, not `filabridge_03919C461204338.yaml`)
+3. In `configuration.yaml`, ensure:
 
 ```yaml
 homeassistant:
   packages: !include_dir_named packages
 ```
 
-4. **Reinicie o Home Assistant** (obrigatório após utility_meter e template sensors)
-5. No FilaBridge, clique **Validar HA** na impressora Bambu (ou confira manualmente em **Ferramentas de desenvolvedor → Estados**):
+4. **Restart Home Assistant** (required after utility_meter and template sensors)
+5. In FilaBridge+, click **Validate HA** on the Bambu printer (or check manually in **Developer Tools → States**):
    - `sensor.filabridge_<prefix>_filament_usage`
-   - `sensor.filabridge_<prefix>_filament_usage_meter` — **obrigatório**; sem ele, `utility_meter.calibrate` fica desconhecida
+   - `sensor.filabridge_<prefix>_filament_usage_meter` — **required**; without it, `utility_meter.calibrate` is unknown
    - `input_number.filabridge_<prefix>_last_tray`
    - `sensor.filabridge_<prefix>_active_tray`
 
-## 5. Mapear bobinas (Spoolman)
+## 5. Map spools (Spoolman)
 
-### Pela interface
+### Via the UI
 
-No dashboard **Bambu Lab Printers**, use o dropdown em cada slot AMS para atribuir uma bobina do Spoolman.
+On the **Bambu Lab Printers** dashboard, use the dropdown on each AMS slot to assign a Spoolman spool.
 
-### Por NFC (fluxo FilaBridge)
+### Via NFC (FilaBridge+ flow)
 
-1. Gere tag NFC do **spool** na aba NFC
-2. Gere tag NFC do **slot AMS** (seção AMS Slots)
-3. Escaneie: primeiro o spool, depois o slot
-4. O FilaBridge grava `extra.active_tray` no Spoolman com o `unique_id` da bandeja HA
+1. Generate an NFC tag for the **spool** on the NFC tab
+2. Generate an NFC tag for the **AMS slot** (AMS Slots section)
+3. Scan: spool first, then the slot
+4. FilaBridge+ stores `spool_id` on the slot (`printer_slots` table) and mirrors `extra.active_tray` in Spoolman
 
-Formato da location AMS:
+AMS location format:
 
 ```
-{Nome da Impressora} - AMS 1 Slot 2
-{Nome da Impressora} - External Spool
+{Printer Name} - AMS 1 Slot 2
+{Printer Name} - External Spool
 ```
 
-## 6. Como funciona o tracking automático
+## 6. How automatic tracking works
 
-| Evento HA | Webhook FilaBridge | Ação |
-|-----------|-------------------|------|
-| Fim de impressão / troca de bandeja | `spool_usage` | Deduz peso do spool atribuído à bandeja ativa |
-| Troca física de bobina (RFID) | `tray_change` | Auto-atribui spool pelo `extra.tag` aprendido |
-| Bandeja vazia (`name=Empty`) | `tray_change` | Desatribui spool da bandeja |
+| HA event | FilaBridge+ webhook | Action |
+|----------|-------------------|--------|
+| Print start | `print_started` | Opens a print history job (file + printer) |
+| Print end / tray change | `spool_usage` | Debits weight from the spool on the active tray and logs usage on the open job |
+| Print end | `print_finished` | Closes the history job (`finish` = completed; other state = failed) |
+| Physical spool swap (RFID) | `tray_change` | Auto-assigns spool from learned `extra.tag` |
+| Empty tray (`name=Empty`) | `tray_change` | Unassigns spool from tray |
 
-O mapeamento bobina ↔ bandeja fica no Spoolman em `extra.active_tray` (valor = `unique_id` da entidade HA).
+Spool ↔ tray mapping lives in the FilaBridge+ database (`printer_slots` table, `spool_id` column — same table used by Moonraker toolheads). Spoolman gets a mirror in `extra.active_tray` (value = HA entity `unique_id`) for display.
 
-## 7. Testar
+> **Important:** `print_started`/`print_finished` events and history logging require the updated YAML package. If you installed the package before this version, **regenerate HA Config in FilaBridge+ and replace the file in `packages/`**, then restart HA. With old YAML, Spoolman debit still works, but history groups consumption into auto-created jobs without file names.
 
-1. Atribua uma bobina a um slot AMS
-2. Inicie uma impressão curta
-3. Ao terminar, verifique no Spoolman se o peso foi deduzido
-4. Troque uma bobina com tag RFID Bambu — deve reatribuir automaticamente
+## 7. Testing
 
-### Teste manual pelo Home Assistant (sem imprimir)
+1. Assign a spool to an AMS slot
+2. Start a short print
+3. When finished, verify weight was debited in Spoolman
+4. Swap a spool with a Bambu RFID tag — should reassign automatically
 
-Os `rest_command` do package FilaBridge são **fixos** (não incluem o prefix da impressora):
+### Manual test from Home Assistant (without printing)
 
-| Serviço | Uso |
+FilaBridge+ package `rest_command` services are **fixed** (they do not include the printer prefix):
+
+| Service | Use |
 |---------|-----|
-| `rest_command.filabridge_update_spool` | Simular débito de filamento |
-| `rest_command.filabridge_tray_change` | Simular troca de bobina |
+| `rest_command.filabridge_update_spool` | Simulate filament debit |
+| `rest_command.filabridge_tray_change` | Simulate spool swap |
 
-**Ferramentas de desenvolvedor → Ações** — exemplo para debitar 5,5 g do slot 3:
+**Developer Tools → Actions** — example to debit 5.5 g from slot 3:
 
-- **Ação:** `rest_command.filabridge_update_spool`
-- **Dados YAML** (ajuste o `entity_id` da bandeja):
+- **Action:** `rest_command.filabridge_update_spool`
+- **YAML data** (adjust tray `entity_id`):
 
 ```yaml
-filament_name: "Teste HA"
+filament_name: "HA test"
 filament_material: "PLA"
 filament_tray_uuid: ""
 filament_used_weight: "5.5"
@@ -120,16 +124,16 @@ filament_color: "#FFFFFF"
 filament_active_tray_id: "sensor.bambu_lab_a1_ams_tray_3"
 ```
 
-Script reutilizável (editor de script do HA — **sem** chave no topo, comece em `alias:`):
+Reusable script (HA script editor — **no** key at the top, start with `alias:`):
 
 ```yaml
-alias: "Teste FilaBridge - debitar Slot 3"
+alias: "FilaBridge test - debit Slot 3"
 icon: mdi:printer-3d-nozzle
 mode: single
 sequence:
   - action: rest_command.filabridge_update_spool
     data:
-      filament_name: "Teste HA"
+      filament_name: "HA test"
       filament_material: "PLA"
       filament_tray_uuid: ""
       filament_used_weight: "5.5"
@@ -137,60 +141,60 @@ sequence:
       filament_active_tray_id: "sensor.bambu_lab_a1_ams_tray_3"
 ```
 
-Entidades com prefix da impressora (ex. `03919c461204338`): `sensor.filabridge_<prefix>_filament_usage_meter`, `input_number.filabridge_<prefix>_last_tray` — **não** confundir com os nomes dos `rest_command`.
+Printer-prefixed entities (e.g. `03919c461204338`): `sensor.filabridge_<prefix>_filament_usage_meter`, `input_number.filabridge_<prefix>_last_tray` — **do not** confuse with `rest_command` names.
 
 ## Troubleshooting
 
-### `utility_meter.calibrate` — ação desconhecida
+### `utility_meter.calibrate` — unknown action
 
-A automação `filabridge_update_spool_*` usa `utility_meter.calibrate` para zerar o acumulador após debitar filamento no Spoolman (mesma lógica do SpoolmanSync). **Não remova essa ação** — ela só aparece como desconhecida quando o utility meter não foi carregado no HA.
+The `filabridge_update_spool_*` automation uses `utility_meter.calibrate` to reset the accumulator after debiting filament in Spoolman (same logic as SpoolmanSync). **Do not remove this action** — it only appears as unknown when the utility meter was not loaded in HA.
 
-| Sintoma | Causa | Correção |
-|---------|-------|----------|
-| Só existe `filament_usage`, não `filament_usage_meter` | Package incompleto ou sem reinício do HA | Baixe **HA Config** de novo, substitua o arquivo inteiro em `packages/`, reinicie o HA |
-| Aviso ao iniciar impressão | Automação inválida enquanto o meter não existe | Após corrigir o package, o aviso some sozinho |
-| Package antigo com `cycle: none` | Valor inválido no `utility_meter` (bug corrigido no SpoolmanSync v1.2.0) | Regenere o YAML no FilaBridge (versão atual omite `cycle`) |
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Only `filament_usage` exists, not `filament_usage_meter` | Incomplete package or HA not restarted | Download **HA Config** again, replace the full file in `packages/`, restart HA |
+| Warning when print starts | Invalid automation while meter is missing | After fixing the package, the warning clears |
+| Old package with `cycle: none` | Invalid `utility_meter` value (bug fixed in SpoolmanSync v1.2.0) | Regenerate YAML in FilaBridge+ (current version omits `cycle`) |
 
-Checklist pós-reinício: use **Validar HA** no FilaBridge ou confirme as 4 entidades listadas na seção 4.
+Post-restart checklist: use **Validate HA** in FilaBridge+ or confirm the 4 entities listed in section 4.
 
-### Webhook não chega ao FilaBridge
+### Webhook does not reach FilaBridge+
 
-- Teste do HA: `curl -X POST http://IP_FILABRIDGE:5000/api/webhook -H "Content-Type: application/json" -d '{"event":"spool_usage","active_tray_id":"test","used_weight":0}'`
-- Confirme **FilaBridge Public URL** com IP da rede, não `localhost`
-- Verifique firewall entre HA e FilaBridge
+- Test from HA: `curl -X POST http://FILABRIDGE_IP:5000/api/webhook -H "Content-Type: application/json" -d '{"event":"spool_usage","active_tray_id":"test","used_weight":0}'`
+- Confirm **FilaBridge+ Public URL** uses a network IP, not `localhost`
+- Check firewall between HA and FilaBridge+
 
-### Nenhuma impressora descoberta
+### No printers discovered
 
-- Confirme ha-bambulab instalado e impressora visível no HA
-- Token HA válido com permissões de leitura
-- Teste conexão em Settings
+- Confirm ha-bambulab is installed and the printer is visible in HA
+- Valid HA token with read permissions
+- Test connection in Settings
 
-### Peso não deduzido
+### Weight not debited
 
-- Verifique automações `filabridge_update_spool_*` ativas no HA
-- Confirme bobina atribuída ao slot (`extra.active_tray` no Spoolman)
-- Veja logs do HA em **Configurações → Sistema → Logs**
+- Verify `filabridge_update_spool_*` automations are active in HA
+- Confirm spool assigned to slot on the FilaBridge+ dashboard (mirror `extra.active_tray` appears in Spoolman)
+- Check HA logs in **Settings → System → Logs**
 
-A automação **não chama o webhook durante o print** — só no **fim** (`print_status` → `finish`/`idle`) ou na **troca de bandeja**. Durante a impressão, monitore se estes sensores sobem:
+The automation **does not call the webhook during the print** — only at the **end** (`print_status` → `finish`/`idle`) or on **tray change**. During printing, monitor these sensors:
 
-| Sensor | O que deve acontecer |
-|--------|----------------------|
-| `sensor.filabridge_<prefix>_filament_usage` | Sobe com o progresso |
-| `sensor.filabridge_<prefix>_filament_usage_meter` | Acumula gramas |
-| `sensor.bambu_lab_a1_print_weight` | > 0 (peso total do job) |
-| `sensor.bambu_lab_a1_print_progress` | Sobe de 0 → 100 |
-| `sensor.filabridge_<prefix>_active_tray` | Mostra o slot ativo (ex. `13` = AMS slot 3) |
+| Sensor | Expected behavior |
+|--------|-------------------|
+| `sensor.filabridge_<prefix>_filament_usage` | Increases with progress |
+| `sensor.filabridge_<prefix>_filament_usage_meter` | Accumulates grams |
+| `sensor.bambu_lab_a1_print_weight` | > 0 (total job weight) |
+| `sensor.bambu_lab_a1_print_progress` | Rises from 0 → 100 |
+| `sensor.filabridge_<prefix>_active_tray` | Shows active slot (e.g. `13` = AMS slot 3) |
 
-Se `print_weight` ficar **0** o tempo todo, o meter nunca acumula e o débito é pulado (`tray_weight >= 0.01`).
+If `print_weight` stays **0**, the meter never accumulates and debit is skipped (`tray_weight >= 0.01`).
 
-No fim do print, a automação só debita se `print_status` vier de `running`/`pause`/etc. → `finish`/`idle`. Regenerar o package YAML no FilaBridge corrige `last_tray` desatualizado e o trigger `print_start` (grava o slot ao iniciar).
+At print end, the automation only debits if `print_status` goes from `running`/`pause`/etc. → `finish`/`idle`. Regenerating the YAML package in FilaBridge+ fixes stale `last_tray` and the `print_start` trigger (records slot on start).
 
-### RFID não faz auto-assign
+### RFID does not auto-assign
 
-- Só funciona com bobinas Bambu com tag RFID válida
-- Spools sem RFID reportam `tray_uuid` só zeros — ignorados pelo FilaBridge
-- O `extra.tag` é aprendido no primeiro `spool_usage` com RFID válido
+- Only works with Bambu spools with valid RFID tags
+- Spools without RFID report all-zero `tray_uuid` — ignored by FilaBridge+
+- `extra.tag` is learned on the first `spool_usage` with valid RFID
 
-### Coexistência com Moonraker (Snapmaker)
+### Coexistence with Moonraker (Snapmaker)
 
-Impressoras Moonraker continuam com polling G-code. Impressoras Bambu usam apenas webhooks HA — não há conflito.
+Moonraker printers keep G-code polling. Bambu printers use HA webhooks only — no conflict.

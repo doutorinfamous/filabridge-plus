@@ -6,7 +6,7 @@
 
 A high-performance Go microservice with a modern Next.js web UI that bridges your 3D printers and **Spoolman** for (mostly) automatic filament inventory management.
 
-> **This fork** is maintained by [Papai Nerd](https://github.com/doutorinfamous) at [github.com/doutorinfamous/filabridge](https://github.com/doutorinfamous/filabridge). It focuses on **Snapmaker** and **Bambu Lab** printers. **PrusaLink / Prusa printer support has been removed** — see [Acknowledgments](#acknowledgments) below.
+> **This fork** is maintained by [Papai Nerd](https://github.com/doutorinfamous) at [github.com/doutorinfamous/filabridge-plus](https://github.com/doutorinfamous/filabridge-plus). It focuses on **Snapmaker** and **Bambu Lab** printers. **PrusaLink / Prusa printer support has been removed** — see [Acknowledgments](#acknowledgments) below.
 
 ## Acknowledgments
 
@@ -65,7 +65,7 @@ Bambu printers are integrated **indirectly** through **Home Assistant** and the 
 4. Download the **HA package** YAML, place it in HA `packages/`, and restart Home Assistant
 5. Map AMS slots to Spoolman spools on the dashboard or via NFC
 
-Full step-by-step guide: **[docs/home-assistant-setup.md](../docs/home-assistant-setup.md)**
+Full step-by-step guide: **[docs/home-assistant-setup.md](docs/home-assistant-setup.md)**
 
 ## Prerequisites
 
@@ -91,8 +91,8 @@ Full step-by-step guide: **[docs/home-assistant-setup.md](../docs/home-assistant
 2. **Clone and start FilaBridge+**:
 
    ```bash
-   git clone https://github.com/doutorinfamous/filabridge.git
-   cd filabridge
+   git clone https://github.com/doutorinfamous/filabridge-plus.git
+   cd filabridge-plus
    docker compose up -d --build
    ```
 
@@ -222,7 +222,7 @@ filabridge/
 - **FilaBridge+ public URL** must be reachable from HA (use LAN IP, not `localhost`)
 - After updating the HA package, **restart Home Assistant** and run **Validate HA**
 - Required entities: `sensor.filabridge_*_filament_usage`, `*_filament_usage_meter`, `input_number.filabridge_*_last_tray`, `sensor.filabridge_*_active_tray`
-- See **[docs/home-assistant-setup.md](../docs/home-assistant-setup.md)** for webhook tests and `utility_meter.calibrate` issues
+- See **[docs/home-assistant-setup.md](docs/home-assistant-setup.md)** for webhook tests and `utility_meter.calibrate` issues
 
 ### Spoolman
 
@@ -257,7 +257,7 @@ npm run dev -- -p 5000
 
 Open `http://localhost:5000`. Override the backend with `BACKEND_URL` (default `http://127.0.0.1:5001`).
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Roadmap
 
@@ -277,18 +277,18 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 Contributions are welcome!
 
 - Report bugs and suggest features via GitHub Issues
-- Submit focused PRs (see [CONTRIBUTING.md](../CONTRIBUTING.md))
+- Submit focused PRs (see [CONTRIBUTING.md](CONTRIBUTING.md))
 - Improve docs — especially HA setup and printer-specific guides
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0** — see [LICENSE](../LICENSE). As a fork of [needo37/filabridge](https://github.com/needo37/filabridge), derivative works remain under GPL v3.
+This project is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). As a fork of [needo37/filabridge](https://github.com/needo37/filabridge), derivative works remain under GPL v3.
 
 ## Support
 
 | Topic | Where to look |
 |-------|----------------|
-| **This fork (Snapmaker / Bambu / Spoolman bridge)** | [Issues](https://github.com/doutorinfamous/filabridge/issues) on this repository |
+| **This fork (Snapmaker / Bambu / Spoolman bridge)** | [Issues](https://github.com/doutorinfamous/filabridge-plus/issues) on this repository |
 | **Original FilaBridge+ (PrusaLink era)** | [needo37/filabridge](https://github.com/needo37/filabridge) |
 | **Spoolman** | [Donkie/Spoolman](https://github.com/Donkie/Spoolman) |
 | **Bambu in Home Assistant** | [greghesp/ha-bambulab](https://github.com/greghesp/ha-bambulab) |

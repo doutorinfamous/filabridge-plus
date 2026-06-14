@@ -66,7 +66,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="border-t border-sidebar-border p-4 text-[11px] text-muted-foreground">
           <Link
-            href="https://github.com/doutorinfamous"
+            href="https://github.com/doutorinfamous/filabridge-plus"
             target="_blank"
             rel="noopener noreferrer"
             className="transition-colors hover:text-foreground"

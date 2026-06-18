@@ -10,6 +10,7 @@ import {
   TimeoutSettings,
 } from "@/components/settings/advanced-settings";
 import {
+  GeneralInfoSettings,
   HomeAssistantSettings,
   SpoolmanSettings,
 } from "@/components/settings/general-settings";
@@ -17,7 +18,7 @@ import { PrintersSettings } from "@/components/settings/printers-settings";
 import { DatabaseBrowser } from "@/components/_temp/database-browser";
 
 const VALID_TABS = [
-  "spoolman",
+  "general",
   "home-assistant",
   "printers",
   "advanced",
@@ -25,9 +26,21 @@ const VALID_TABS = [
 ] as const;
 
 function normalizeTab(value: string | null): string {
-  if (value === "general") return "spoolman";
+  if (value === "spoolman") return "general";
   if (value && (VALID_TABS as readonly string[]).includes(value)) return value;
-  return "spoolman";
+  return "general";
+}
+
+function GeneralTabContent() {
+  const [spoolmanConfigured, setSpoolmanConfigured] = React.useState(false);
+
+  return (
+    <>
+      <GeneralInfoSettings />
+      <SpoolmanSettings onConfiguredChange={setSpoolmanConfigured} />
+      {spoolmanConfigured && <AutoAssignSettings />}
+    </>
+  );
 }
 
 function SettingsContent() {
@@ -45,21 +58,22 @@ function SettingsContent() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Spoolman, Home Assistant, printers, and FilaBridge+ behavior
+          General settings, Spoolman, Home Assistant, printers, and FilaBridge+
+          behavior
         </p>
       </header>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
-          <TabsTrigger value="spoolman">Spoolman</TabsTrigger>
+          <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="home-assistant">Home Assistant</TabsTrigger>
           <TabsTrigger value="printers">Printers</TabsTrigger>
           <TabsTrigger value="advanced">Advanced</TabsTrigger>
           <TabsTrigger value="database">Database</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="spoolman" className="space-y-4">
-          <SpoolmanSettings />
+        <TabsContent value="general" className="space-y-4">
+          <GeneralTabContent />
         </TabsContent>
 
         <TabsContent value="home-assistant" className="space-y-4">
@@ -73,7 +87,6 @@ function SettingsContent() {
         <TabsContent value="advanced" className="space-y-4">
           <TimeoutSettings />
           <PollingSettings />
-          <AutoAssignSettings />
         </TabsContent>
 
         <TabsContent value="database" className="space-y-4">

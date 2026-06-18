@@ -14,6 +14,7 @@ const (
 const (
 	DefaultSpoolmanURL          = "http://localhost:7912"
 	DefaultWebPort              = "5001"
+	DefaultPublicWebPort        = "5000"
 	DefaultPollInterval         = 30
 	DefaultLocationSyncInterval = 5 // minutes
 	DefaultDBFileName           = "filabridge.db"

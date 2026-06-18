@@ -63,7 +63,6 @@ export default function DashboardPage() {
   React.useEffect(() => {
     const initialTimer = setTimeout(() => {
       loadPrinters();
-      loadBambu();
       api
         .testSpoolman()
         .then(() => setSpoolmanOk(true))
@@ -77,13 +76,25 @@ export default function DashboardPage() {
         })
         .catch(() => undefined);
     }, 0);
-    const timer = setInterval(loadBambu, intervalMs);
 
-    return () => {
-      clearTimeout(initialTimer);
-      clearInterval(timer);
-    };
-  }, [loadPrinters, loadBambu, intervalMs]);
+    return () => clearTimeout(initialTimer);
+  }, [loadPrinters]);
+
+  const hasBambuPrinters = Object.entries(printers ?? {}).some(
+    ([id, cfg]) => id !== "no_printers" && cfg.driver === "bambu_ha"
+  );
+
+  React.useEffect(() => {
+    if (!hasBambuPrinters) {
+      setBambuPrinters([]);
+      setBambuError(null);
+      return;
+    }
+
+    loadBambu();
+    const timer = setInterval(loadBambu, intervalMs);
+    return () => clearInterval(timer);
+  }, [hasBambuPrinters, loadBambu, intervalMs]);
 
   const moonrakerEntries = Object.entries(printers ?? {}).filter(
     ([id, cfg]) => id !== "no_printers" && cfg.driver !== "bambu_ha"
@@ -95,7 +106,7 @@ export default function DashboardPage() {
 
   const onChanged = () => {
     refresh();
-    loadBambu();
+    if (hasBambuPrinters) loadBambu();
   };
 
   return (
@@ -144,7 +155,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <Button asChild>
-              <Link href="/settings?tab=spoolman">
+              <Link href="/settings?tab=general">
                 <Settings className="size-4" />
                 Configure Spoolman
               </Link>
@@ -170,7 +181,7 @@ export default function DashboardPage() {
                 </p>
               </div>
               <Button asChild>
-                <Link href="/settings?tab=spoolman">
+                <Link href="/settings?tab=general">
                   <Settings className="size-4" />
                   Check Spoolman settings
                 </Link>
@@ -198,8 +209,8 @@ export default function DashboardPage() {
                 Welcome to FilaBridge+
               </p>
               <p className="text-sm text-balance text-muted-foreground">
-                No printers configured yet. Add your Snapmaker U1 (Moonraker) or
-                Bambu Lab (Home Assistant) to start tracking filament usage
+                No printers configured yet. Add a Snapmaker U1 (Moonraker) or
+                another supported printer to start tracking filament usage
                 automatically.
               </p>
             </div>
@@ -213,7 +224,7 @@ export default function DashboardPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {bambuError && bambuPrinters.length === 0 && (
+          {hasBambuPrinters && bambuError && (
             <Card className="border-warning/40 bg-warning/5">
               <CardContent className="py-6 text-center">
                 <p className="text-sm text-balance text-muted-foreground">

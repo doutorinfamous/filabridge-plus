@@ -40,15 +40,11 @@ func GetHAToken(b *core.FilamentBridge) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-// GetFilabridgePublicURL returns the URL HA uses for webhooks.
+// GetFilabridgePublicURL returns the URL used for webhooks and NFC/QR tags.
 func GetFilabridgePublicURL(b *core.FilamentBridge) (string, error) {
 	url, err := b.GetConfigValue(core.ConfigKeyFilabridgePublicURL)
 	if err != nil || url == "" {
-		port, _ := b.GetConfigValue(core.ConfigKeyWebPort)
-		if port == "" {
-			port = core.DefaultWebPort
-		}
-		return fmt.Sprintf("http://localhost:%s", port), nil
+		return fmt.Sprintf("http://localhost:%s", core.DefaultPublicWebPort), nil
 	}
 	return strings.TrimRight(url, "/"), nil
 }

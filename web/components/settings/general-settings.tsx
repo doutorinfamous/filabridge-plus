@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Home, Loader2, PlugZap, Save } from "lucide-react";
+import { Globe, Home, Loader2, PlugZap, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
@@ -36,7 +36,86 @@ function Field({
   );
 }
 
-export function SpoolmanSettings() {
+export const DEFAULT_FILABRIDGE_PUBLIC_URL = "http://localhost:5000";
+
+export function GeneralInfoSettings() {
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [publicUrl, setPublicUrl] = React.useState(DEFAULT_FILABRIDGE_PUBLIC_URL);
+
+  React.useEffect(() => {
+    api
+      .getHAConfig()
+      .then((cfg) => {
+        setPublicUrl(cfg.filabridge_public_url || DEFAULT_FILABRIDGE_PUBLIC_URL);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    const trimmed = publicUrl.trim();
+    if (!trimmed) {
+      toast.error("Enter the FilaBridge+ public URL");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateConfig({
+        filabridge_public_url: trimmed.replace(/\/$/, ""),
+      });
+      toast.success("General configuration saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="border-border/70 bg-card/60">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Globe className="size-4" /> General info
+        </CardTitle>
+        <CardDescription>
+          Public URL used for webhooks and NFC/QR tag links
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Field
+          id="filabridge_public_url"
+          label="FilaBridge+ public URL (webhooks and NFC/QR tags)"
+          hint="Must be reachable on your network — do not use localhost or 0.0.0.0 when phones or Home Assistant need to reach FilaBridge+"
+        >
+          <Input
+            id="filabridge_public_url"
+            value={publicUrl}
+            disabled={loading}
+            onChange={(e) => setPublicUrl(e.target.value)}
+            placeholder="http://192.168.1.20:5000"
+          />
+        </Field>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button onClick={save} disabled={saving || loading}>
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function SpoolmanSettings({
+  onConfiguredChange,
+}: {
+  onConfiguredChange?: (configured: boolean) => void;
+}) {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
@@ -50,20 +129,23 @@ export function SpoolmanSettings() {
     api
       .getConfig()
       .then((cfg) => {
+        const spoolmanUrl = cfg.spoolman_url ?? "";
         setForm({
-          spoolman_url: cfg.spoolman_url ?? "",
+          spoolman_url: spoolmanUrl,
           spoolman_username: cfg.spoolman_username ?? "",
           spoolman_password: cfg.spoolman_password ?? "",
         });
+        onConfiguredChange?.(spoolmanUrl.trim() !== "");
       })
       .catch(() => toast.error("Failed to load configuration"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [onConfiguredChange]);
 
   const save = async () => {
     setSaving(true);
     try {
       await api.updateConfig(form);
+      onConfiguredChange?.(form.spoolman_url.trim() !== "");
       toast.success("Configuration saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save");
@@ -176,7 +258,6 @@ export function HomeAssistantSettings() {
   const [form, setForm] = React.useState({
     ha_url: "",
     ha_token: "",
-    filabridge_public_url: "",
   });
 
   React.useEffect(() => {
@@ -186,7 +267,6 @@ export function HomeAssistantSettings() {
         setForm((f) => ({
           ...f,
           ha_url: cfg.ha_url ?? "",
-          filabridge_public_url: cfg.filabridge_public_url ?? "",
         }));
         setTokenSet(cfg.ha_token_set);
       })
@@ -203,7 +283,6 @@ export function HomeAssistantSettings() {
     try {
       await api.updateHAConfig({
         ha_url: form.ha_url.trim(),
-        filabridge_public_url: form.filabridge_public_url.trim(),
         ...(form.ha_token.trim() ? { ha_token: form.ha_token.trim() } : {}),
       });
       toast.success("Home Assistant configuration saved");
@@ -265,21 +344,6 @@ export function HomeAssistantSettings() {
               setForm((f) => ({ ...f, ha_token: e.target.value }))
             }
             placeholder="Long-Lived Access Token"
-          />
-        </Field>
-        <Field
-          id="filabridge_public_url"
-          label="FilaBridge+ public URL (webhooks and NFC/QR tags)"
-          hint="Used in HA webhooks and as the base for NFC/QR tag URLs — must be reachable on your network (do not use localhost or 0.0.0.0)"
-        >
-          <Input
-            id="filabridge_public_url"
-            value={form.filabridge_public_url}
-            disabled={loading}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, filabridge_public_url: e.target.value }))
-            }
-            placeholder="http://192.168.1.20:5000"
           />
         </Field>
         <div className="flex flex-wrap gap-2 pt-1">

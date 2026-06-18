@@ -219,9 +219,9 @@ export function PrintersSettings() {
   const [bambuOpen, setBambuOpen] = React.useState(false);
   const [bambuList, setBambuList] = React.useState<BambuPrinter[] | null>(null);
   const [bambuError, setBambuError] = React.useState<string | null>(null);
+  const [bambuHaNotConfigured, setBambuHaNotConfigured] = React.useState(false);
 
   const [chooserOpen, setChooserOpen] = React.useState(false);
-  const [haConfigured, setHaConfigured] = React.useState<boolean | null>(null);
 
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
 
@@ -330,18 +330,24 @@ export function PrintersSettings() {
 
   const openChooser = () => {
     setChooserOpen(true);
-    setHaConfigured(null);
-    api
-      .getHAConfig()
-      .then((cfg) => setHaConfigured(Boolean(cfg.ha_url) && cfg.ha_token_set))
-      .catch(() => setHaConfigured(false));
   };
 
-  const openBambuDiscovery = async () => {
+  const openBambuFlow = async () => {
+    setChooserOpen(false);
     setBambuOpen(true);
     setBambuList(null);
     setBambuError(null);
+    setBambuHaNotConfigured(false);
+
     try {
+      const cfg = await api.getHAConfig();
+      const configured = Boolean(cfg.ha_url) && cfg.ha_token_set;
+      if (!configured) {
+        setBambuHaNotConfigured(true);
+        setBambuList([]);
+        return;
+      }
+
       const list = await api.getBambuPrinters();
       setBambuList((list ?? []).filter((p) => !p.registered));
     } catch (error) {
@@ -564,13 +570,8 @@ export function PrintersSettings() {
 
             <button
               type="button"
-              onClick={() => {
-                if (!haConfigured) return;
-                setChooserOpen(false);
-                openBambuDiscovery();
-              }}
-              disabled={haConfigured !== true}
-              className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-background/50"
+              onClick={openBambuFlow}
+              className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left transition-colors hover:bg-accent"
             >
               <span className="flex items-center gap-3">
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/60">
@@ -583,32 +584,8 @@ export function PrintersSettings() {
                   </span>
                 </span>
               </span>
-              {haConfigured === null ? (
-                <Loader2 className="size-4 animate-spin text-muted-foreground" />
-              ) : haConfigured ? (
-                <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-                  <CheckCircle2 className="size-3.5" /> HA configured
-                </span>
-              ) : (
-                <ChevronRight className="size-4 text-muted-foreground" />
-              )}
+              <ChevronRight className="size-4 text-muted-foreground" />
             </button>
-            {haConfigured === false && (
-              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs text-warning">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                <span>
-                  Home Assistant is not configured yet — it is required for
-                  Bambu Lab printers.{" "}
-                  <Link
-                    href="/settings?tab=home-assistant"
-                    className="font-medium underline underline-offset-2"
-                    onClick={() => setChooserOpen(false)}
-                  >
-                    Configure Home Assistant
-                  </Link>
-                </span>
-              </div>
-            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -655,7 +632,17 @@ export function PrintersSettings() {
       </Dialog>
 
       {/* Bambu discovery */}
-      <Dialog open={bambuOpen} onOpenChange={setBambuOpen}>
+      <Dialog
+        open={bambuOpen}
+        onOpenChange={(open) => {
+          setBambuOpen(open);
+          if (!open) {
+            setBambuHaNotConfigured(false);
+            setBambuList(null);
+            setBambuError(null);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Bambu Lab (Home Assistant)</DialogTitle>
@@ -673,7 +660,22 @@ export function PrintersSettings() {
             </DialogDescription>
           </DialogHeader>
           <Separator />
-          {bambuList === null ? (
+          {bambuHaNotConfigured ? (
+            <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Home Assistant is not configured yet — it is required for
+                Bambu Lab printers.{" "}
+                <Link
+                  href="/settings?tab=home-assistant"
+                  className="font-medium underline underline-offset-2"
+                  onClick={() => setBambuOpen(false)}
+                >
+                  Configure Home Assistant
+                </Link>
+              </span>
+            </div>
+          ) : bambuList === null ? (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> Discovering
               printers...

@@ -794,6 +794,13 @@ func (b *FilamentBridge) ResolvePrintError(errorID, action string, spoolID int) 
 		jobName = pe.JobName
 	}
 
+	resolveJobStatus := func() string {
+		if pe.Kind == PrintErrorKindUsageConfirm && pe.FinalStatus != "" {
+			return pe.FinalStatus
+		}
+		return JobStatusCompleted
+	}
+
 	switch action {
 	case ResolveActionAssignSpool:
 		if spoolID <= 0 {
@@ -806,28 +813,40 @@ func (b *FilamentBridge) ResolvePrintError(errorID, action string, spoolID int) 
 			return fmt.Errorf("cannot assign spool: no toolhead recorded for this error")
 		}
 
-		if err := b.Spoolman.UpdateSpoolUsage(spoolID, pe.Grams); err != nil {
-			return fmt.Errorf("failed to update spool in Spoolman: %w", err)
-		}
-
-		jobID, err := b.GetLatestPrintJobID(printerID, jobName)
-		if err != nil {
+		if err := b.debitToolheadUsage(printerID, jobName, *pe.ToolheadID, spoolID, pe.Grams); err != nil {
 			return err
-		}
-		if jobID == 0 {
-			jobID, err = b.StartPrintJob(printerID, jobName)
-			if err != nil {
-				return fmt.Errorf("failed to resolve print job: %w", err)
-			}
-		}
-
-		if err := b.LogToolheadUsage(jobID, printerID, *pe.ToolheadID, spoolID, pe.Grams); err != nil {
-			log.Printf("Warning: failed to log toolhead usage during error resolution: %v", err)
 		}
 
 		b.acknowledgePrintErrorByID(errorID)
 		if !b.hasPendingPrintErrors(printerID, jobName) {
-			if err := b.FinishPrintJob(printerID, jobName, JobStatusCompleted); err != nil {
+			if err := b.FinishPrintJob(printerID, jobName, resolveJobStatus()); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case ResolveActionDebitSpool:
+		targetSpoolID := spoolID
+		if targetSpoolID <= 0 && pe.SpoolID != nil {
+			targetSpoolID = *pe.SpoolID
+		}
+		if targetSpoolID <= 0 {
+			return fmt.Errorf("spool_id is required")
+		}
+		if pe.Grams <= 0 {
+			return fmt.Errorf("cannot debit spool: no gram amount recorded for this error")
+		}
+		if pe.ToolheadID == nil {
+			return fmt.Errorf("cannot debit spool: no toolhead recorded for this error")
+		}
+
+		if err := b.debitToolheadUsage(printerID, jobName, *pe.ToolheadID, targetSpoolID, pe.Grams); err != nil {
+			return err
+		}
+
+		b.acknowledgePrintErrorByID(errorID)
+		if !b.hasPendingPrintErrors(printerID, jobName) {
+			if err := b.FinishPrintJob(printerID, jobName, resolveJobStatus()); err != nil {
 				return err
 			}
 		}
@@ -835,11 +854,36 @@ func (b *FilamentBridge) ResolvePrintError(errorID, action string, spoolID int) 
 
 	case ResolveActionDismiss:
 		b.acknowledgeAllPrintErrors(printerID, jobName)
-		return b.FinishPrintJob(printerID, jobName, JobStatusCompleted)
+		return b.FinishPrintJob(printerID, jobName, resolveJobStatus())
 
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
+}
+
+func (b *FilamentBridge) debitToolheadUsage(printerID, jobName string, toolheadID, spoolID int, grams float64) error {
+	if b.Spoolman == nil {
+		return fmt.Errorf("spoolman not configured")
+	}
+	if err := b.Spoolman.UpdateSpoolUsage(spoolID, grams); err != nil {
+		return fmt.Errorf("failed to update spool in Spoolman: %w", err)
+	}
+
+	jobID, err := b.GetLatestPrintJobID(printerID, jobName)
+	if err != nil {
+		return err
+	}
+	if jobID == 0 {
+		jobID, err = b.StartPrintJob(printerID, jobName)
+		if err != nil {
+			return fmt.Errorf("failed to resolve print job: %w", err)
+		}
+	}
+
+	if err := b.LogToolheadUsage(jobID, printerID, toolheadID, spoolID, grams); err != nil {
+		log.Printf("Warning: failed to log toolhead usage during error resolution: %v", err)
+	}
+	return nil
 }
 
 func (b *FilamentBridge) acknowledgePrintErrorByID(errorID string) {
@@ -905,6 +949,11 @@ func (b *FilamentBridge) AddPrintError(input PrintErrorInput) {
 		printerName = input.PrinterID
 	}
 
+	kind := input.Kind
+	if kind == "" {
+		kind = PrintErrorKindProcessing
+	}
+
 	b.errorMutex.Lock()
 	defer b.errorMutex.Unlock()
 
@@ -919,7 +968,19 @@ func (b *FilamentBridge) AddPrintError(input PrintErrorInput) {
 		if existingJob == "" {
 			existingJob = existing.JobName
 		}
-		if existingJob != jobName || existing.Error != input.Error {
+		if existingJob != jobName {
+			continue
+		}
+		if kind == PrintErrorKindUsageConfirm {
+			if existing.Kind == kind &&
+				existing.ToolheadID != nil &&
+				input.ToolheadID >= 0 &&
+				*existing.ToolheadID == input.ToolheadID {
+				return
+			}
+			continue
+		}
+		if existing.Error != input.Error {
 			continue
 		}
 		return
@@ -931,12 +992,14 @@ func (b *FilamentBridge) AddPrintError(input PrintErrorInput) {
 
 	pe := PrintError{
 		ID:           errorID,
+		Kind:         kind,
 		PrinterID:    input.PrinterID,
 		PrinterName:  printerName,
 		Filename:     jobName,
 		JobName:      jobName,
 		Grams:        input.Grams,
 		Error:        input.Error,
+		FinalStatus:  input.FinalStatus,
 		Timestamp:    time.Now(),
 		Acknowledged: false,
 	}
@@ -944,9 +1007,97 @@ func (b *FilamentBridge) AddPrintError(input PrintErrorInput) {
 		toolheadID := input.ToolheadID
 		pe.ToolheadID = &toolheadID
 	}
+	if input.SpoolID > 0 {
+		spoolID := input.SpoolID
+		pe.SpoolID = &spoolID
+	}
 
 	b.printErrors[errorID] = pe
 
+	if kind == PrintErrorKindUsageConfirm {
+		log.Printf("⚠️  Print ended for %s (%s): %.2fg on toolhead %d — manual debit confirmation required",
+			printerName, jobName, input.Grams, input.ToolheadID)
+		return
+	}
+
 	log.Printf("⚠️  Print processing failed for %s (%s): %s - Manual resolution required",
 		printerName, jobName, input.Error)
+}
+
+// AddUsageConfirmationErrors creates pending debit confirmations for a cancelled/failed print.
+func (b *FilamentBridge) AddUsageConfirmationErrors(
+	printerID, printerName, jobName, finalStatus string,
+	usage map[int]float64,
+) error {
+	if len(usage) == 0 {
+		return fmt.Errorf("no filament usage to confirm for print %s", jobName)
+	}
+
+	added := 0
+	unmappedToolheads := make([]int, 0)
+
+	for toolheadID, grams := range usage {
+		if grams <= 0 {
+			continue
+		}
+
+		spoolID, err := b.GetToolheadMapping(printerID, toolheadID)
+		if err != nil {
+			errMsg := fmt.Sprintf("error getting toolhead mapping for %s toolhead %d: %v", printerName, toolheadID, err)
+			b.AddPrintError(PrintErrorInput{
+				PrinterID:   printerID,
+				PrinterName: printerName,
+				JobName:     jobName,
+				Error:       errMsg,
+				ToolheadID:  toolheadID,
+				Grams:       grams,
+				FinalStatus: finalStatus,
+			})
+			continue
+		}
+
+		if spoolID == 0 {
+			unmappedToolheads = append(unmappedToolheads, toolheadID)
+			continue
+		}
+
+		b.AddPrintError(PrintErrorInput{
+			PrinterID:   printerID,
+			PrinterName: printerName,
+			JobName:     jobName,
+			Error: fmt.Sprintf(
+				"Print ended before completion. Confirm whether to debit %.2fg from the mapped spool on %s.",
+				grams, DefaultToolheadDisplayName(toolheadID),
+			),
+			ToolheadID:  toolheadID,
+			Grams:       grams,
+			Kind:        PrintErrorKindUsageConfirm,
+			SpoolID:     spoolID,
+			FinalStatus: finalStatus,
+		})
+		added++
+	}
+
+	for _, toolheadID := range unmappedToolheads {
+		weight := usage[toolheadID]
+		errMsg := fmt.Sprintf(
+			"Print ended before completion with %.2fg on extruder %d, but no spool is mapped to %s. Map a spool to debit usage or dismiss without logging.",
+			weight, toolheadID, DefaultToolheadDisplayName(toolheadID),
+		)
+		b.AddPrintError(PrintErrorInput{
+			PrinterID:   printerID,
+			PrinterName: printerName,
+			JobName:     jobName,
+			Error:       errMsg,
+			ToolheadID:  toolheadID,
+			Grams:       weight,
+			FinalStatus: finalStatus,
+		})
+		added++
+	}
+
+	if added == 0 {
+		return fmt.Errorf("no usage confirmations created for print %s", jobName)
+	}
+	return nil
 }

@@ -84,13 +84,16 @@ export interface PrintHistoryResponse {
 
 export interface PrintError {
   id: string;
+  kind?: "processing_error" | "usage_confirmation";
   printer_id?: string;
   printer_name: string;
   filename: string;
   job_name?: string;
   toolhead_id?: number;
+  spool_id?: number;
   grams?: number;
   error: string;
+  final_status?: string;
   timestamp: string;
   acknowledged: boolean;
 }

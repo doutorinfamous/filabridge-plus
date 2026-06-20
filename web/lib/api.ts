@@ -200,6 +200,7 @@ export const api = {
     id: string,
     body:
       | { action: "assign_spool"; spool_id: number }
+      | { action: "debit_spool"; spool_id?: number }
       | { action: "dismiss" }
   ) =>
     request<{ message: string }>(

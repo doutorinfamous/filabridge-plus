@@ -12,6 +12,12 @@ type ToolheadMapping struct {
 	DisplayName string    `json:"display_name,omitempty"` // Custom toolhead name or empty for default
 }
 
+// Print error kinds.
+const (
+	PrintErrorKindProcessing     = "processing_error"
+	PrintErrorKindUsageConfirm   = "usage_confirmation"
+)
+
 // PrintErrorInput carries structured data when recording a print processing failure.
 type PrintErrorInput struct {
 	PrinterID   string
@@ -20,24 +26,31 @@ type PrintErrorInput struct {
 	Error       string
 	ToolheadID  int     // -1 when unknown
 	Grams       float64 // 0 when unknown
+	Kind        string  // empty defaults to processing_error
+	SpoolID     int     // >0 when spool is already known (usage confirmation)
+	FinalStatus string  // job status to apply when all confirmations are resolved
 }
 
 // Print error resolution actions.
 const (
 	ResolveActionAssignSpool = "assign_spool"
+	ResolveActionDebitSpool  = "debit_spool"
 	ResolveActionDismiss     = "dismiss"
 )
 
 // PrintError represents a failed print processing attempt.
 type PrintError struct {
 	ID           string    `json:"id"`
+	Kind         string    `json:"kind,omitempty"`
 	PrinterID    string    `json:"printer_id,omitempty"`
 	PrinterName  string    `json:"printer_name"`
 	Filename     string    `json:"filename"`
 	JobName      string    `json:"job_name,omitempty"`
 	ToolheadID   *int      `json:"toolhead_id,omitempty"`
+	SpoolID      *int      `json:"spool_id,omitempty"`
 	Grams        float64   `json:"grams,omitempty"`
 	Error        string    `json:"error"`
+	FinalStatus  string    `json:"final_status,omitempty"`
 	Timestamp    time.Time `json:"timestamp"`
 	Acknowledged bool      `json:"acknowledged"`
 }

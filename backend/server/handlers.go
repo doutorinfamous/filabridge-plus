@@ -736,7 +736,9 @@ func (ws *WebServer) resolvePrintErrorHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Action != core.ResolveActionAssignSpool && req.Action != core.ResolveActionDismiss {
+	if req.Action != core.ResolveActionAssignSpool &&
+		req.Action != core.ResolveActionDebitSpool &&
+		req.Action != core.ResolveActionDismiss {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid action"})
 		return
 	}

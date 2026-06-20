@@ -48,8 +48,53 @@ function formatGrams(grams: number): string {
   })}g`;
 }
 
+function isUsageConfirmation(err: PrintError): boolean {
+  return err.kind === "usage_confirmation";
+}
+
 function canAssignSpool(err: PrintError): boolean {
-  return (err.grams ?? 0) > 0 && err.toolhead_id != null;
+  return (
+    !isUsageConfirmation(err) &&
+    (err.grams ?? 0) > 0 &&
+    err.toolhead_id != null
+  );
+}
+
+function canDebitSpool(err: PrintError): boolean {
+  return (
+    isUsageConfirmation(err) &&
+    (err.grams ?? 0) > 0 &&
+    err.toolhead_id != null &&
+    err.spool_id != null
+  );
+}
+
+function errorTitle(err: PrintError): string {
+  if (isUsageConfirmation(err)) {
+    return `Confirm filament usage — ${err.printer_name}`;
+  }
+  return `Failed to process print — ${err.printer_name}`;
+}
+
+function dismissTitle(err: PrintError): string {
+  if (isUsageConfirmation(err)) {
+    return "Skip debiting filament?";
+  }
+  return "Complete without logging usage?";
+}
+
+function dismissDescription(err: PrintError): string {
+  if (isUsageConfirmation(err)) {
+    return "Filament consumption for this print will not be debited in Spoolman or recorded in history. All pending confirmations for this file will be dismissed.";
+  }
+  return "Filament consumption for this print will not be debited in Spoolman or recorded in history. All pending errors for this file will be dismissed.";
+}
+
+function dismissButtonLabel(err: PrintError): string {
+  if (isUsageConfirmation(err)) {
+    return "Don't debit";
+  }
+  return "Complete without logging";
 }
 
 function PrintErrorActions({
@@ -103,16 +148,38 @@ function PrintErrorActions({
     }
   };
 
+  const debitSpool = async () => {
+    setSaving(true);
+    try {
+      await api.resolvePrintError(err.id, {
+        action: "debit_spool",
+        spool_id: err.spool_id,
+      });
+      toast.success("Filament usage debited");
+      onChanged();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to debit spool"
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const dismiss = async () => {
     setDismissOpen(false);
     setSaving(true);
     try {
       await api.resolvePrintError(err.id, { action: "dismiss" });
-      toast.success("Print marked as completed");
+      toast.success(
+        isUsageConfirmation(err)
+          ? "Print closed without debiting"
+          : "Print marked as completed"
+      );
       onChanged();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to complete print"
+        error instanceof Error ? error.message : "Failed to resolve print"
       );
     } finally {
       setSaving(false);
@@ -126,6 +193,17 @@ function PrintErrorActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
+      {canDebitSpool(err) && (
+        <Button variant="default" size="sm" disabled={saving} onClick={debitSpool}>
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Check className="size-4" />
+          )}
+          Debit {formatGrams(err.grams ?? 0)}
+        </Button>
+      )}
+
       {canAssignSpool(err) && (
         <Popover open={spoolOpen} onOpenChange={handleSpoolOpenChange}>
           <PopoverTrigger asChild>
@@ -172,18 +250,14 @@ function PrintErrorActions({
         disabled={saving}
         onClick={() => setDismissOpen(true)}
       >
-        Complete without logging
+        {dismissButtonLabel(err)}
       </Button>
 
       <Dialog open={dismissOpen} onOpenChange={setDismissOpen}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Complete without logging usage?</DialogTitle>
-            <DialogDescription>
-              Filament consumption for this print will not be debited in
-              Spoolman or recorded in history. All pending errors for this file
-              will be dismissed.
-            </DialogDescription>
+            <DialogTitle>{dismissTitle(err)}</DialogTitle>
+            <DialogDescription>{dismissDescription(err)}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDismissOpen(false)}>
@@ -222,9 +296,7 @@ export function PrintErrors({
           className="border-destructive/40 bg-destructive/10"
         >
           <AlertTriangle className="size-4" />
-          <AlertTitle>
-            Failed to process print — {err.printer_name}
-          </AlertTitle>
+          <AlertTitle>{errorTitle(err)}</AlertTitle>
           <AlertDescription className="space-y-2 break-words">
             <p className="break-words">
               <span className="font-medium">File:</span> {err.filename}
@@ -240,12 +312,16 @@ export function PrintErrors({
                 <Badge variant="outline">
                   Toolhead {(err.toolhead_id ?? 0) + 1}
                 </Badge>
+                {err.spool_id != null && (
+                  <Badge variant="outline">Spool #{err.spool_id}</Badge>
+                )}
               </div>
             )}
             <p className="break-words">{err.error}</p>
             <p className="text-xs text-muted-foreground">
-              Choose a spool to debit consumption or complete without logging
-              to Spoolman.
+              {isUsageConfirmation(err)
+                ? "Confirm whether to debit this filament usage in Spoolman."
+                : "Choose a spool to debit consumption or complete without logging to Spoolman."}
             </p>
             <PrintErrorActions err={err} onChanged={onChanged} />
           </AlertDescription>

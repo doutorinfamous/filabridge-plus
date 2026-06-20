@@ -229,3 +229,112 @@ func TestResolvePrintErrorAssignSpoolPartialCompletion(t *testing.T) {
 		t.Fatalf("expected 1 pending error, got %d", len(bridge.GetPrintErrors()))
 	}
 }
+
+func TestAddUsageConfirmationErrorsCreatesPendingDebit(t *testing.T) {
+	bridge := newTestBridge(t)
+	printerID := "printer1"
+	jobName := "cancelled.gcode"
+
+	if err := bridge.SetToolheadMapping(printerID, 0, 42); err != nil {
+		t.Fatalf("SetToolheadMapping failed: %v", err)
+	}
+
+	if err := bridge.AddUsageConfirmationErrors(
+		printerID,
+		printerID,
+		jobName,
+		JobStatusCancelled,
+		map[int]float64{0: 4.5},
+	); err != nil {
+		t.Fatalf("AddUsageConfirmationErrors failed: %v", err)
+	}
+
+	errors := bridge.GetPrintErrors()
+	if len(errors) != 1 {
+		t.Fatalf("expected 1 confirmation, got %d", len(errors))
+	}
+	if errors[0].Kind != PrintErrorKindUsageConfirm {
+		t.Fatalf("expected usage_confirmation kind, got %q", errors[0].Kind)
+	}
+	if errors[0].SpoolID == nil || *errors[0].SpoolID != 42 {
+		t.Fatalf("expected spool 42, got %v", errors[0].SpoolID)
+	}
+	if errors[0].FinalStatus != JobStatusCancelled {
+		t.Fatalf("expected cancelled final status, got %q", errors[0].FinalStatus)
+	}
+}
+
+func TestResolvePrintErrorDebitSpool(t *testing.T) {
+	bridge := newTestBridgeWithSpoolman(t, spoolmanUpdateStub(t))
+
+	printerID := "printer1"
+	jobName := "cancelled.gcode"
+	if _, err := bridge.StartPrintJob(printerID, jobName); err != nil {
+		t.Fatalf("StartPrintJob failed: %v", err)
+	}
+	if err := bridge.FinishPrintJob(printerID, jobName, JobStatusCancelled); err != nil {
+		t.Fatalf("FinishPrintJob failed: %v", err)
+	}
+
+	bridge.AddPrintError(PrintErrorInput{
+		PrinterID:   printerID,
+		PrinterName: printerID,
+		JobName:     jobName,
+		Error:       "confirm debit",
+		ToolheadID:  0,
+		Grams:       4.5,
+		Kind:        PrintErrorKindUsageConfirm,
+		SpoolID:     42,
+		FinalStatus: JobStatusCancelled,
+	})
+
+	errors := bridge.GetPrintErrors()
+	if len(errors) != 1 {
+		t.Fatalf("expected 1 confirmation, got %d", len(errors))
+	}
+
+	if err := bridge.ResolvePrintError(errors[0].ID, ResolveActionDebitSpool, 0); err != nil {
+		t.Fatalf("ResolvePrintError debit_spool failed: %v", err)
+	}
+
+	if status := getJobStatus(t, bridge, printerID, jobName); status != JobStatusCancelled {
+		t.Fatalf("expected cancelled status, got %q", status)
+	}
+	if len(bridge.GetPrintErrors()) != 0 {
+		t.Fatal("expected confirmation to be acknowledged")
+	}
+}
+
+func TestResolvePrintErrorDismissUsageConfirmation(t *testing.T) {
+	bridge := newTestBridge(t)
+
+	printerID := "printer1"
+	jobName := "cancelled.gcode"
+	if _, err := bridge.StartPrintJob(printerID, jobName); err != nil {
+		t.Fatalf("StartPrintJob failed: %v", err)
+	}
+	if err := bridge.FinishPrintJob(printerID, jobName, JobStatusCancelled); err != nil {
+		t.Fatalf("FinishPrintJob failed: %v", err)
+	}
+
+	bridge.AddPrintError(PrintErrorInput{
+		PrinterID:   printerID,
+		PrinterName: printerID,
+		JobName:     jobName,
+		Error:       "confirm debit",
+		ToolheadID:  0,
+		Grams:       4.5,
+		Kind:        PrintErrorKindUsageConfirm,
+		SpoolID:     42,
+		FinalStatus: JobStatusCancelled,
+	})
+
+	errors := bridge.GetPrintErrors()
+	if err := bridge.ResolvePrintError(errors[0].ID, ResolveActionDismiss, 0); err != nil {
+		t.Fatalf("ResolvePrintError dismiss failed: %v", err)
+	}
+
+	if status := getJobStatus(t, bridge, printerID, jobName); status != JobStatusCancelled {
+		t.Fatalf("expected cancelled status, got %q", status)
+	}
+}

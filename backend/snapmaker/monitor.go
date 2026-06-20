@@ -17,7 +17,7 @@ func shouldProcessCompletedJob(rawState, filename string, printDuration float64,
 		!alreadyProcessed
 }
 
-// shouldProcessCancelledJob detects cancelled prints that need partial filament debit.
+// shouldProcessCancelledJob detects cancelled prints that need manual filament debit confirmation.
 func shouldProcessCancelledJob(rawState, filename string, printDuration float64, alreadyProcessed bool) bool {
 	return IsMoonrakerCancelledState(rawState) &&
 		filename != "" &&
@@ -280,7 +280,7 @@ type partialFilamentResolution struct {
 	Source string
 }
 
-// handlePrintCancelled debits partial filament usage when a print is cancelled.
+// handlePrintCancelled creates manual debit confirmations when a print is cancelled.
 func handlePrintCancelled(b *core.FilamentBridge, printerID string, config core.PrinterConfig, filename string, printerStatus *PrinterStatus) error {
 	log.Printf("Print cancelled via Moonraker (%s): %s", config.IPAddress, filename)
 
@@ -307,15 +307,23 @@ func handlePrintCancelled(b *core.FilamentBridge, printerID string, config core.
 			JobName:     filename,
 			Error:       errorMsg,
 			ToolheadID:  -1,
+			FinalStatus: core.JobStatusCancelled,
 		})
 		return fmt.Errorf("%s", errorMsg)
 	}
 
 	totalG := sumFilamentUsage(resolution.Usage)
-	log.Printf("Print cancelled — debited %.2fg (source: %s) for %s: %+v", totalG, resolution.Source, filename, resolution.Usage)
+	log.Printf("Print cancelled — %.2fg pending confirmation (source: %s) for %s: %+v",
+		totalG, resolution.Source, filename, resolution.Usage)
 
-	if err := b.ProcessFilamentUsage(printerID, resolution.Usage, filename); err != nil {
-		log.Printf("Error processing cancelled print filament usage: %v", err)
+	if err := b.AddUsageConfirmationErrors(
+		printerID,
+		printerName,
+		filename,
+		core.JobStatusCancelled,
+		resolution.Usage,
+	); err != nil {
+		log.Printf("Error creating cancelled print usage confirmations: %v", err)
 		return err
 	}
 

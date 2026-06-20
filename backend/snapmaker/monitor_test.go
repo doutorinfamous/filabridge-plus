@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"filabridge/core"
+	"filabridge/spoolman"
 )
 
 func TestShouldProcessCompletedJob(t *testing.T) {
@@ -214,5 +215,57 @@ func TestResolvePartialFilamentUsageProgressFallback(t *testing.T) {
 	}
 	if resolution.Usage[0] != 4 {
 		t.Fatalf("expected 4g at 40%% progress, got %v", resolution.Usage)
+	}
+}
+
+func TestHandlePrintCancelledCreatesConfirmationWithoutDebiting(t *testing.T) {
+	server := newMoonrakerStub(t, "; total filament used [g] = 10.00\n")
+	bridge := newTestBridge(t)
+
+	spoolmanCalled := false
+	spoolServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			spoolmanCalled = true
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(spoolServer.Close)
+
+	bridge.Spoolman = spoolman.NewClient(spoolServer.URL, 10, "", "")
+	bridge.Config = &core.Config{
+		PrinterTimeout:             10,
+		PrinterFileDownloadTimeout: 10,
+	}
+
+	printerID := "printer1"
+	if err := bridge.SavePrinterConfig(printerID, core.PrinterConfig{
+		Name:      "Test Printer",
+		IPAddress: server.URL,
+		Toolheads: 1,
+	}); err != nil {
+		t.Fatalf("SavePrinterConfig failed: %v", err)
+	}
+	if err := bridge.SetToolheadMapping(printerID, 0, 42); err != nil {
+		t.Fatalf("SetToolheadMapping failed: %v", err)
+	}
+
+	status := &PrinterStatus{Progress: 0.4}
+	err := handlePrintCancelled(bridge, printerID, core.PrinterConfig{
+		Name:      "Test Printer",
+		IPAddress: server.URL,
+	}, "jobs/test.gcode", status)
+	if err != nil {
+		t.Fatalf("handlePrintCancelled failed: %v", err)
+	}
+	if spoolmanCalled {
+		t.Fatal("expected cancelled print not to debit Spoolman automatically")
+	}
+
+	errors := bridge.GetPrintErrors()
+	if len(errors) != 1 {
+		t.Fatalf("expected 1 confirmation, got %d", len(errors))
+	}
+	if errors[0].Kind != core.PrintErrorKindUsageConfirm {
+		t.Fatalf("expected usage_confirmation, got %q", errors[0].Kind)
 	}
 }

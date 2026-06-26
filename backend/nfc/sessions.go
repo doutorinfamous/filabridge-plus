@@ -90,6 +90,10 @@ func hasLocationSet(isPrinterLocation bool, printerName string, toolheadID int, 
 // 2. "PrinterName - CustomName" - printer toolhead locations (custom name)
 // 3. "LocationName" - non-printer locations (drybox, storage, etc.)
 func ParseLocationParam(b *core.FilamentBridge, location string) (printerName string, toolheadID int, locationName string, isPrinterLocation bool, err error) {
+	if matchedPrinter, matchedToolheadID, matchedLocation, ok := tryParseVirtualToolheadLocation(b, location); ok {
+		return matchedPrinter, matchedToolheadID, matchedLocation, true, nil
+	}
+
 	// Check if it contains " - " which indicates a printer toolhead location
 	if strings.Contains(location, " - ") {
 		parts := strings.SplitN(location, " - ", 2)
@@ -138,6 +142,14 @@ func ParseLocationParam(b *core.FilamentBridge, location string) (printerName st
 							}
 						}
 					}
+
+					// Stale NFC tags may use an old printer prefix (e.g. model name). When the
+					// suffix is a valid toolhead index for exactly one Moonraker printer, use it.
+					if matchedPrinter, matchedToolheadID, matchedLocation, ok := tryResolveMoonrakerToolheadByIndex(b, toolheadID); ok {
+						log.Printf("NFC location %q matched printer %q toolhead %d via toolhead suffix fallback",
+							location, matchedPrinter, matchedToolheadID)
+						return matchedPrinter, matchedToolheadID, matchedLocation, true, nil
+					}
 				}
 			}
 			// If we couldn't parse it as a toolhead location, treat as regular location
@@ -146,6 +158,83 @@ func ParseLocationParam(b *core.FilamentBridge, location string) (printerName st
 
 	// For all other cases, treat as a location name
 	return "", 0, location, false, nil
+}
+
+func tryParseVirtualToolheadLocation(b *core.FilamentBridge, location string) (printerName string, toolheadID int, locationName string, ok bool) {
+	matchedPrinter, toolheadDisplayName, matched := b.ParseVirtualToolheadLocation(location)
+	if !matched {
+		return "", 0, "", false
+	}
+
+	printerID, err := b.FindPrinterIDByName(matchedPrinter)
+	if err != nil || printerID == "" {
+		return "", 0, "", false
+	}
+
+	printerConfigs, err := b.GetAllPrinterConfigs()
+	if err != nil {
+		return "", 0, "", false
+	}
+	printerConfig, exists := printerConfigs[printerID]
+	if !exists {
+		return "", 0, "", false
+	}
+
+	toolheadNames, err := b.GetAllToolheadNames(printerID)
+	if err != nil {
+		toolheadNames = make(map[int]string)
+	}
+
+	for tid := 0; tid < printerConfig.Toolheads; tid++ {
+		displayName := core.DefaultToolheadDisplayName(tid)
+		if customName, exists := toolheadNames[tid]; exists && customName != "" {
+			displayName = customName
+		}
+		if displayName == toolheadDisplayName {
+			return matchedPrinter, tid, location, true
+		}
+	}
+
+	return "", 0, "", false
+}
+
+func tryResolveMoonrakerToolheadByIndex(b *core.FilamentBridge, toolheadID int) (printerName string, resolvedToolheadID int, locationName string, ok bool) {
+	printerConfigs, err := b.GetAllPrinterConfigs()
+	if err != nil {
+		return "", 0, "", false
+	}
+
+	type match struct {
+		printerName string
+		location    string
+	}
+
+	var matches []match
+	for printerID, printerConfig := range printerConfigs {
+		driver := printerConfig.Driver
+		if driver != "" && driver != core.DriverMoonraker {
+			continue
+		}
+		if toolheadID < 0 || toolheadID >= printerConfig.Toolheads {
+			continue
+		}
+
+		displayName, err := b.GetToolheadName(printerID, toolheadID)
+		if err != nil || displayName == "" {
+			displayName = core.DefaultToolheadDisplayName(toolheadID)
+		}
+
+		matches = append(matches, match{
+			printerName: printerConfig.Name,
+			location:    fmt.Sprintf("%s - %s", printerConfig.Name, displayName),
+		})
+	}
+
+	if len(matches) != 1 {
+		return "", 0, "", false
+	}
+
+	return matches[0].printerName, toolheadID, matches[0].location, true
 }
 
 // SessionIDForIP creates a unique session ID based on client IP only.

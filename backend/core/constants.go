@@ -39,6 +39,7 @@ const (
 	ConfigKeySpoolmanPassword                 = "spoolman_password"
 	ConfigKeyAutoAssignPreviousSpoolEnabled   = "auto_assign_previous_spool_enabled"
 	ConfigKeyAutoAssignPreviousSpoolLocation  = "auto_assign_previous_spool_location"
+	ConfigKeySyncFilamentToPrinter            = "sync_filament_to_printer"
 	ConfigKeyHAURL                            = "ha_url"
 	ConfigKeyHAToken                          = "ha_token"
 	ConfigKeyFilabridgePublicURL              = "filabridge_public_url"

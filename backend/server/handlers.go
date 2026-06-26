@@ -134,6 +134,7 @@ func (ws *WebServer) mapToolheadHandler(c *gin.Context) {
 			ws.bridge.TryAutoAssignSpoolToDefaultStorage(previousSpoolID)
 		}
 
+		ws.syncSnapmakerFilamentAfterToolheadMap(req.PrinterName, req.ToolheadID, 0)
 		ws.BroadcastStatus()
 		c.JSON(http.StatusOK, gin.H{"message": "Toolhead unmapped successfully"})
 	} else {
@@ -146,6 +147,7 @@ func (ws *WebServer) mapToolheadHandler(c *gin.Context) {
 			}
 			return
 		}
+		ws.syncSnapmakerFilamentAfterToolheadMap(req.PrinterName, req.ToolheadID, req.SpoolID)
 		ws.BroadcastStatus()
 		c.JSON(http.StatusOK, gin.H{"message": "Toolhead mapped successfully"})
 	}

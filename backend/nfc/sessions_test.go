@@ -298,3 +298,40 @@ func TestGetSessionBambuLocationFlags(t *testing.T) {
 		t.Fatalf("expected complete session from GetSession, HasLocation=%v IsComplete=%v", session.HasLocation, session.IsComplete())
 	}
 }
+
+func TestParseLocationParamStalePrinterPrefixFallback(t *testing.T) {
+	dir := t.TempDir()
+	bridge, err := core.NewFilamentBridge(&core.Config{
+		DBFile:      filepath.Join(dir, "test.db"),
+		SpoolmanURL: "http://127.0.0.1:1",
+	})
+	if err != nil {
+		t.Fatalf("failed to create bridge: %v", err)
+	}
+	t.Cleanup(func() { bridge.Close() })
+
+	if err := bridge.SavePrinterConfig("printer1", core.PrinterConfig{
+		Name:      "U1 de Ricardo",
+		IPAddress: "192.168.1.95",
+		Toolheads: 4,
+	}); err != nil {
+		t.Fatalf("failed to save printer config: %v", err)
+	}
+
+	printerName, toolheadID, locationName, isPrinterLocation, err := ParseLocationParam(bridge, "Snapmaker U1 - Toolhead 4")
+	if err != nil {
+		t.Fatalf("ParseLocationParam failed: %v", err)
+	}
+	if !isPrinterLocation {
+		t.Fatal("expected stale NFC prefix to still resolve as printer toolhead")
+	}
+	if printerName != "U1 de Ricardo" {
+		t.Fatalf("expected printer U1 de Ricardo, got %q", printerName)
+	}
+	if toolheadID != 3 {
+		t.Fatalf("expected toolhead_id 3 for Toolhead 4, got %d", toolheadID)
+	}
+	if locationName != "U1 de Ricardo - Toolhead 4" {
+		t.Fatalf("expected canonical location name, got %q", locationName)
+	}
+}

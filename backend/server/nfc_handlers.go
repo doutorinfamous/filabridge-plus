@@ -229,7 +229,13 @@ func (ws *WebServer) completeNFCAssignment(session *nfc.Session) error {
 		}
 		return bambu.AssignSpoolToTray(ws.bridge, session.SpoolID, tray.UniqueID, session.LocationName)
 	}
-	return ws.bridge.AssignSpoolToLocation(session.SpoolID, session.PrinterName, session.ToolheadID, session.LocationName, session.IsPrinterLocation)
+	if err := ws.bridge.AssignSpoolToLocation(session.SpoolID, session.PrinterName, session.ToolheadID, session.LocationName, session.IsPrinterLocation); err != nil {
+		return err
+	}
+	if session.IsPrinterLocation {
+		ws.syncSnapmakerFilamentAfterToolheadMap(session.PrinterName, session.ToolheadID, session.SpoolID)
+	}
+	return nil
 }
 
 func buildNFCSelectSpoolSuccessPayload(ws *WebServer, session *nfc.Session) gin.H {

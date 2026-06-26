@@ -368,6 +368,7 @@ func (b *FilamentBridge) initializeDefaultConfig() error {
 		ConfigKeySpoolmanTimeout:                 fmt.Sprintf("%d", SpoolmanTimeout),
 		ConfigKeyAutoAssignPreviousSpoolEnabled:  "false", // Enable auto-assignment of previous spool to default location
 		ConfigKeyAutoAssignPreviousSpoolLocation: "",      // Default location name for auto-assigned previous spools
+		ConfigKeySyncFilamentToPrinter:           "true",  // Push Spoolman filament metadata to Snapmaker print_task_config
 	}
 
 	var totalCount int
@@ -407,6 +408,7 @@ func getConfigDescription(key string) string {
 		ConfigKeySpoolmanTimeout:                 "Spoolman API timeout in seconds",
 		ConfigKeyAutoAssignPreviousSpoolEnabled:  "Enable automatic assignment of previous spool to default location when assigning new spool to toolhead",
 		ConfigKeyAutoAssignPreviousSpoolLocation: "Default location name where previous spools will be automatically assigned (must exist as a location)",
+		ConfigKeySyncFilamentToPrinter:           "Push Spoolman filament settings to Snapmaker U1 print_task_config when mapping a spool to a toolhead",
 		ConfigKeyHAURL:                           "Home Assistant URL (e.g. http://192.168.1.10:8123)",
 		ConfigKeyHAToken:                         "Home Assistant Long-Lived Access Token",
 		ConfigKeyFilabridgePublicURL:             "Public URL for FilaBridge webhooks (reachable from HA)",
@@ -469,6 +471,28 @@ func (b *FilamentBridge) GetAutoAssignPreviousSpoolEnabled() (bool, error) {
 		return false, err
 	}
 	return value == "true", nil
+}
+
+// GetSyncFilamentToPrinterEnabled reports whether spool-to-toolhead mapping should
+// update Snapmaker print_task_config on the printer.
+func (b *FilamentBridge) GetSyncFilamentToPrinterEnabled() (bool, error) {
+	value, err := b.GetConfigValue(ConfigKeySyncFilamentToPrinter)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, nil
+		}
+		return false, err
+	}
+	return value == "true", nil
+}
+
+// SetSyncFilamentToPrinterEnabled toggles Snapmaker filament sync on toolhead mapping.
+func (b *FilamentBridge) SetSyncFilamentToPrinterEnabled(enabled bool) error {
+	value := "false"
+	if enabled {
+		value = "true"
+	}
+	return b.SetConfigValue(ConfigKeySyncFilamentToPrinter, value)
 }
 
 // SetAutoAssignPreviousSpoolEnabled sets whether auto-assignment of previous spool is enabled.

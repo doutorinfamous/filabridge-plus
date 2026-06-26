@@ -3,6 +3,7 @@
 package snapmaker
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,13 @@ import (
 
 	"filabridge/core"
 )
+
+// MaxPhysicalExtruders is the number of physical extruders on Snapmaker U1.
+const MaxPhysicalExtruders = 4
+
+type moonrakerGcodeScriptRequest struct {
+	Script string `json:"script"`
+}
 
 // Moonraker raw states from Snapmaker U1.
 const (
@@ -200,9 +208,22 @@ func (c *MoonrakerClient) addAuth(req *http.Request) {
 }
 
 func (c *MoonrakerClient) doRequest(method, path string) ([]byte, error) {
-	req, err := http.NewRequest(method, c.baseURL+path, nil)
+	return c.doRequestWithBody(method, path, nil, "")
+}
+
+func (c *MoonrakerClient) doRequestWithBody(method, path string, body []byte, contentType string) ([]byte, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	c.addAuth(req)
@@ -213,16 +234,44 @@ func (c *MoonrakerClient) doRequest(method, path string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Moonraker API error: %d - %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("Moonraker API error: %d - %s", resp.StatusCode, string(respBody))
 	}
 
-	return body, nil
+	return respBody, nil
+}
+
+// RunGcodeScript executes a G-code script on the printer via Moonraker.
+func (c *MoonrakerClient) RunGcodeScript(script string) error {
+	script = strings.TrimSpace(script)
+	if script == "" {
+		return fmt.Errorf("gcode script cannot be empty")
+	}
+
+	payload, err := json.Marshal(moonrakerGcodeScriptRequest{Script: script})
+	if err != nil {
+		return fmt.Errorf("failed to encode gcode script request: %w", err)
+	}
+
+	body, err := c.doRequestWithBody(http.MethodPost, "/printer/gcode/script", payload, "application/json")
+	if err != nil {
+		return err
+	}
+
+	var envelope moonrakerResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return fmt.Errorf("failed to decode gcode script envelope: %w", err)
+	}
+	if envelope.Error != nil {
+		return fmt.Errorf("Moonraker API error: %s", envelope.Error.Message)
+	}
+
+	return nil
 }
 
 // TestConnection verifies basic connectivity to Moonraker.

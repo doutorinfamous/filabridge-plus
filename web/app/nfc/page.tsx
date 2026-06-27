@@ -22,10 +22,11 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ClearNfcTagButton } from "@/components/nfc/clear-nfc-tag-button";
 import { WriteNfcButton } from "@/components/nfc/write-nfc-button";
 import { SpoolDot } from "@/components/spool-select";
 
-type NfcTab = "spool" | "filament" | "location";
+type NfcTab = "spool" | "filament" | "location" | "tag";
 
 function normalizeHexColor(hex: string): string {
   const trimmed = hex.trim();
@@ -215,67 +216,84 @@ export default function NfcPage() {
           <TabsTrigger value="location">
             <MapPin className="size-4" /> Locations
           </TabsTrigger>
+          <TabsTrigger value="tag">
+            <Nfc className="size-4" /> Tag
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        {/* List */}
+        {/* List / Tag info */}
         <Card className="min-w-0 border-border/70 bg-card/60 py-0">
           <CardContent className="p-3">
-            <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search..."
-                className="pl-9"
-              />
-            </div>
-            <ScrollArea className="h-52 w-full min-w-0 pr-2 sm:h-72 lg:h-[480px] [&>[data-slot=scroll-area-viewport]>div]:!block [&>[data-slot=scroll-area-viewport]>div]:min-w-0 [&>[data-slot=scroll-area-viewport]>div]:w-full">
-              {entries === null ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <Skeleton key={i} className="h-14 rounded-lg" />
-                  ))}
-                </div>
-              ) : filtered.length === 0 ? (
-                <p className="px-2 py-8 text-center text-sm text-muted-foreground">
-                  Nothing found.
+            {tab === "tag" ? (
+              <div className="flex h-52 flex-col justify-center px-2 sm:h-72 lg:h-[480px]">
+                <Nfc className="mb-3 size-8 text-muted-foreground/60" />
+                <p className="text-sm font-medium">Physical NFC tags</p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  Use this tab to prepare a writable NFC tag for a new URL.
+                  Clear an old tag here, then switch to Spools, Filaments, or
+                  Locations to write a new one.
                 </p>
-              ) : (
-                <div key={tab} className="space-y-1">
-                  {filtered.map((entry) => {
-                    const isSelected = selected?.url === entry.url;
-                    return (
-                      <button
-                        type="button"
-                        key={entryKey(entry)}
-                        onClick={() => setSelected(entry)}
-                        className={cn(
-                          "flex w-full min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                          isSelected
-                            ? "border-primary/40 bg-accent"
-                            : "border-transparent hover:bg-accent/50"
-                        )}
-                      >
-                        <FilamentColorSwatch
-                          hex={entry.color_hex}
-                          className="mt-0.5"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="line-clamp-2 text-sm font-medium leading-snug">
-                            {entryTitle(entry)}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {entrySubtitle(entry)}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
+              </div>
+            ) : (
+              <>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search..."
+                    className="pl-9"
+                  />
                 </div>
-              )}
-            </ScrollArea>
+                <ScrollArea className="h-52 w-full min-w-0 pr-2 sm:h-72 lg:h-[480px] [&>[data-slot=scroll-area-viewport]>div]:!block [&>[data-slot=scroll-area-viewport]>div]:min-w-0 [&>[data-slot=scroll-area-viewport]>div]:w-full">
+                  {entries === null ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <Skeleton key={i} className="h-14 rounded-lg" />
+                      ))}
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <p className="px-2 py-8 text-center text-sm text-muted-foreground">
+                      Nothing found.
+                    </p>
+                  ) : (
+                    <div key={tab} className="space-y-1">
+                      {filtered.map((entry) => {
+                        const isSelected = selected?.url === entry.url;
+                        return (
+                          <button
+                            type="button"
+                            key={entryKey(entry)}
+                            onClick={() => setSelected(entry)}
+                            className={cn(
+                              "flex w-full min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                              isSelected
+                                ? "border-primary/40 bg-accent"
+                                : "border-transparent hover:bg-accent/50"
+                            )}
+                          >
+                            <FilamentColorSwatch
+                              hex={entry.color_hex}
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="line-clamp-2 text-sm font-medium leading-snug">
+                                {entryTitle(entry)}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {entrySubtitle(entry)}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </ScrollArea>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -285,7 +303,26 @@ export default function NfcPage() {
           className="min-w-0 overflow-hidden border-border/70 bg-card/60"
         >
           <CardContent className="flex w-full min-w-0 flex-col items-center justify-center gap-5 p-4 sm:p-6 lg:min-h-[520px]">
-            {selected ? (
+            {tab === "tag" ? (
+              <>
+                <div className="w-full max-w-md text-center">
+                  <h3 className="text-lg font-semibold">Tag tools</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Clear a tag before programming it with a new spool, filament,
+                    or location URL.
+                  </p>
+                </div>
+                <ClearNfcTagButton />
+                <ol className="max-w-md list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+                  <li>Open NFC Tools Pro on your phone</li>
+                  <li>Tap &quot;Other&quot; → &quot;Erase tag&quot; (or write an empty record)</li>
+                  <li>Hold the tag near your phone until it is cleared</li>
+                  <li>
+                    Switch to Spools, Filaments, or Locations to write a new URL
+                  </li>
+                </ol>
+              </>
+            ) : selected ? (
               <>
                 <div className="flex w-full max-w-md min-w-0 items-start gap-3">
                   <FilamentColorSwatch

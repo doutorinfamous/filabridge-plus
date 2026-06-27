@@ -11,13 +11,17 @@ export interface NfcWriterState {
   /** User-friendly error message when status === "error". */
   errorMessage: string | null;
   write: (url: string) => Promise<void>;
+  erase: () => Promise<void>;
   cancel: () => void;
   reset: () => void;
 }
 
 const WRITE_TIMEOUT_MS = 20_000;
 
-function friendlyErrorMessage(error: unknown): string {
+function friendlyErrorMessage(
+  error: unknown,
+  mode: "write" | "erase"
+): string {
   if (error instanceof DOMException) {
     switch (error.name) {
       case "NotAllowedError":
@@ -27,16 +31,24 @@ function friendlyErrorMessage(error: unknown): string {
       case "NotReadableError":
         return "Could not access NFC. Make sure NFC is turned on in your device settings.";
       case "AbortError":
-        return "Writing was cancelled or timed out. Hold the tag near your phone and try again.";
+        return mode === "erase"
+          ? "Clearing was cancelled or timed out. Hold the tag near your phone and try again."
+          : "Writing was cancelled or timed out. Hold the tag near your phone and try again.";
       case "NetworkError":
-        return "The tag moved away or could not be written. Hold it steady near your phone and try again.";
+        return mode === "erase"
+          ? "The tag moved away or could not be cleared. Hold it steady near your phone and try again."
+          : "The tag moved away or could not be written. Hold it steady near your phone and try again.";
       case "InvalidStateError":
-        return "The tag could not be written. It may be read-only or too small for this URL.";
+        return mode === "erase"
+          ? "The tag could not be cleared. It may be read-only or locked."
+          : "The tag could not be written. It may be read-only or too small for this URL.";
       case "SecurityError":
-        return "NFC writing requires a secure connection (HTTPS).";
+        return "NFC operations require a secure connection (HTTPS).";
     }
   }
-  return "Could not write the NFC tag. Please try again.";
+  return mode === "erase"
+    ? "Could not clear the NFC tag. Please try again."
+    : "Could not write the NFC tag. Please try again.";
 }
 
 /**
@@ -77,7 +89,7 @@ export function useNfcWriter(): NfcWriterState {
     setErrorMessage(null);
   }, [clearTimer]);
 
-  // Abort any pending write on unmount.
+  // Abort any pending operation on unmount.
   React.useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -85,38 +97,36 @@ export function useNfcWriter(): NfcWriterState {
     };
   }, []);
 
-  const write = React.useCallback(
-    async (url: string) => {
+  const runOperation = React.useCallback(
+    async (message: NDEFMessageInit, mode: "write" | "erase") => {
       if (typeof window === "undefined" || !window.NDEFReader) {
         setStatus("error");
         setErrorMessage("Web NFC is not supported by this browser.");
         return;
       }
 
-      // Abort a previous attempt, if any.
       abortRef.current?.abort();
       clearTimer();
 
       const controller = new AbortController();
       abortRef.current = controller;
-      timeoutRef.current = setTimeout(() => controller.abort(), WRITE_TIMEOUT_MS);
+      timeoutRef.current = setTimeout(
+        () => controller.abort(),
+        WRITE_TIMEOUT_MS
+      );
 
       setStatus("writing");
       setErrorMessage(null);
 
       try {
         const ndef = new window.NDEFReader();
-        await ndef.write(
-          { records: [{ recordType: "url", data: url }] },
-          { signal: controller.signal }
-        );
+        await ndef.write(message, { signal: controller.signal });
         setStatus("success");
       } catch (error) {
-        console.error("[Web NFC] Failed to write NFC tag:", error);
-        // If this attempt was superseded or cancelled by the user, stay quiet.
+        console.error(`[Web NFC] Failed to ${mode} NFC tag:`, error);
         if (abortRef.current !== controller) return;
         setStatus("error");
-        setErrorMessage(friendlyErrorMessage(error));
+        setErrorMessage(friendlyErrorMessage(error, mode));
       } finally {
         if (abortRef.current === controller) {
           abortRef.current = null;
@@ -127,5 +137,16 @@ export function useNfcWriter(): NfcWriterState {
     [clearTimer]
   );
 
-  return { supported, status, errorMessage, write, cancel, reset };
+  const write = React.useCallback(
+    async (url: string) => {
+      await runOperation({ records: [{ recordType: "url", data: url }] }, "write");
+    },
+    [runOperation]
+  );
+
+  const erase = React.useCallback(async () => {
+    await runOperation({ records: [{ recordType: "empty" }] }, "erase");
+  }, [runOperation]);
+
+  return { supported, status, errorMessage, write, erase, cancel, reset };
 }

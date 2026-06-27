@@ -139,9 +139,29 @@ Real-time updates use WebSocket (`/ws/status`); the UI falls back to polling if 
 ### NFC workflow
 
 1. Generate QR/NFC URLs on **NFC & QR**
-2. Program tags with NFC Tools Pro (or similar) or direct via browser on supported Chrome on Android devices.
+2. Program tags with **NFC Tools Pro** (or similar), or use **Write to NFC tag** / **Clear tag content** in Chrome on Android (see below).
 3. Scan **spool** then **location** (or the reverse) on `/nfc/scan` — toolheads, AMS slots, and custom locations are supported
 4. Sessions expire after 5 minutes; complete both scans within the timeout
+
+#### Direct write/clear in Chrome (Android)
+
+Web NFC (used by **Write to NFC tag** and the **Tag** tab) only runs in a **secure context**. On Android Chrome that means **HTTPS** or **`http://localhost`** / **`http://127.0.0.1`**. A plain LAN URL such as **`http://192.168.1.20:5000` does not work** for NFC unless you use one of the options below.
+
+**Without setting up an SSL certificate:**
+
+| Approach | When to use | Steps |
+|----------|-------------|--------|
+| **`localhost` via USB** | Quick testing while FilaBridge+ runs on your PC | Enable **USB debugging** on the phone. With the phone connected, run `adb reverse tcp:5000 tcp:5000` on the PC (FilaBridge+ must be listening on port 5000). On the phone, open **`http://localhost:5000`** in Chrome — not the PC’s LAN IP. |
+| **Chrome flag for your LAN URL** | Daily use over Wi‑Fi without HTTPS | On the phone: `chrome://flags` → **Insecure origins treated as secure** → add your FilaBridge+ URL (e.g. `http://192.168.1.20:5000`) → enable → restart Chrome → open that URL. |
+
+Also required on the phone:
+
+- **NFC turned on** in Android settings
+- **NFC permission** granted when Chrome prompts (must tap **Write to NFC tag** or **Clear tag content** first — the API needs a user gesture)
+- **Chrome or Edge on Android** (not Firefox or iOS Safari)
+- **Writable tags** (read-only / locked tags cannot be cleared or overwritten)
+
+If direct browser NFC is not available, use **NFC Tools Pro** to write the URL from the QR code, or **Tag** → manual erase steps shown in the UI.
 
 ## API Endpoints
 
